@@ -30,7 +30,7 @@ jobs:
         env:
           TOPSTEP_USERNAME: ${{ secrets.TOPSTEP_USERNAME }}
           TOPSTEP_API_KEY: ${{ secrets.TOPSTEP_API_KEY }}
-          TOPSTEP_LIVE_DATA: "true"
+          TOPSTEP_LIVE_DATA: "false"
         run: python scripts/mnq_daily.py
 
       - name: Publish latest market-data JSON
