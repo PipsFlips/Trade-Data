@@ -88,9 +88,20 @@ async function sendRelay(){
     .withAutomaticReconnect()
     .build();
 
-  conn.on("GatewayQuote",(id,x)=>{q++;latestQuote=x;if(Number.isFinite(+(x?.lastPrice??x?.price)))latestPrice=+(x.lastPrice??x.price);});
-  conn.on("GatewayTrade",(id,x)=>{t++;addTrade(x);});
-  conn.on("GatewayDepth",()=>{d++;});
+  conn.on("GatewayQuote",(id,x)=>{
+    const rows=Array.isArray(x)?x:[x];
+    q+=rows.length;
+    for(const row of rows){
+      latestQuote=row;
+      if(Number.isFinite(+(row?.lastPrice??row?.price))) latestPrice=+(row.lastPrice??row.price);
+    }
+  });
+  conn.on("GatewayTrade",(id,x)=>{
+    const rows=Array.isArray(x)?x:[x];
+    t+=rows.length;
+    for(const row of rows) addTrade(row);
+  });
+  conn.on("GatewayDepth",(id,x)=>{d+=Array.isArray(x)?x.length:1;});
 
   await conn.start();
   console.log("CONNECTED",conn.connectionId);
