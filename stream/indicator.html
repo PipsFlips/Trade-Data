@@ -27,6 +27,8 @@ body{padding:env(safe-area-inset-top) env(safe-area-inset-right) calc(14px + env
 .chartHead{display:flex;justify-content:space-between;align-items:center;margin-bottom:5px}
 .chartTitle{font-size:13px;font-weight:700}
 .chartHint{font-size:10px;color:var(--muted)}
+.winbtn{appearance:none;border:1px solid var(--line);background:var(--panel2);color:var(--muted);border-radius:8px;padding:5px 10px;font-size:11px;font-weight:700}
+.winbtn.active{color:var(--text);border-color:#41536a;background:#1a2633}
 canvas{display:block;width:100%;height:410px;border-radius:8px;background:#0d131a}
 .section{background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:9px;margin-bottom:9px}
 .section h3{font-size:12px;margin:0 0 7px;color:#cbd5df;text-transform:uppercase;letter-spacing:.06em}
@@ -70,7 +72,12 @@ canvas{display:block;width:100%;height:410px;border-radius:8px;background:#0d131
   <div class="chartCard">
     <div class="chartHead">
       <div class="chartTitle">5-minute structure + live levels</div>
-      <div class="chartHint">drag not required • auto-refresh</div>
+      <div class="chartHint"><span id="windowLabel">4h rolling</span> • auto-refresh</div>
+    </div>
+    <div style="display:flex;gap:6px;margin:0 0 7px 0">
+      <button class="winbtn" data-bars="24">2h</button>
+      <button class="winbtn active" data-bars="48">4h</button>
+      <button class="winbtn" data-bars="72">6h</button>
     </div>
     <canvas id="chart"></canvas>
   </div>
@@ -97,6 +104,8 @@ canvas{display:block;width:100%;height:410px;border-radius:8px;background:#0d131
 const fmt=n=>Number.isFinite(+n)?(+n).toLocaleString(undefined,{minimumFractionDigits:2,maximumFractionDigits:2}):"—";
 const nfmt=n=>Number.isFinite(+n)?Math.round(+n).toLocaleString():"—";
 const colorForKind=k=>k==="support"?"#31c48d":k==="resistance"?"#f06565":k==="profile"?"#57a4ff":"#a6b2bf";
+let chartBarCount=48;
+let lastData=null;
 
 function resizeCanvas(c){
   const dpr=Math.min(window.devicePixelRatio||1,2);
@@ -109,21 +118,23 @@ function resizeCanvas(c){
 }
 
 function drawChart(data){
+  lastData=data;
   const c=document.getElementById("chart");
   const {w,h,ctx}=resizeCanvas(c);
   ctx.clearRect(0,0,w,h);
   ctx.fillStyle="#0d131a"; ctx.fillRect(0,0,w,h);
 
-  const bars=(data.bars5m||[]).slice(-90);
+  const bars=(data.bars5m||[]).slice(-chartBarCount);
   if(!bars.length){ctx.fillStyle="#8f9baa";ctx.fillText("Waiting for 5m bars…",12,22);return;}
 
-  const levels=(data.levels||[]).slice(0,14);
-  const vwaps=[data.vwap?.globex,data.vwap?.rth].filter(Number.isFinite);
-  let min=Math.min(...bars.map(b=>+b.l),...levels.map(l=>+l.price),...vwaps);
-  let max=Math.max(...bars.map(b=>+b.h),...levels.map(l=>+l.price),...vwaps);
-  const pad=(max-min)*.08||20; min-=pad; max+=pad;
+  // Price scale is driven ONLY by the visible candles. Distant levels never expand the chart.
+  let min=Math.min(...bars.map(b=>+b.l));
+  let max=Math.max(...bars.map(b=>+b.h));
+  const rawRange=Math.max(8,max-min);
+  const pad=Math.max(10,rawRange*.10);
+  min-=pad; max+=pad;
 
-  const left=6,right=66,top=8,bottom=58;
+  const left=8,right=72,top=8,bottom=76;
   const cw=w-left-right,ch=h-top-bottom;
   const y=p=>top+(max-p)/(max-min)*ch;
   const x=i=>left+(i+.5)*cw/bars.length;
@@ -137,38 +148,30 @@ function drawChart(data){
     ctx.fillStyle="#718094";ctx.fillText(fmt(price),w-6,py);
   }
 
-  // trap candidate bands
+  // Only the most relevant visible levels are drawn. Everything else remains in the level list below.
+  const current=+data.currentPrice;
+  const visibleLevels=(data.levels||[])
+    .filter(l=>Number.isFinite(+l.price) && +l.price>=min && +l.price<=max)
+    .sort((a,b)=>{
+      const ad=Math.abs(+a.price-current), bd=Math.abs(+b.price-current);
+      return (bd-ad)*.02 + (b.priority-a.priority);
+    })
+    .slice(0,5);
+
   const tick=+(data.contract?.tickSize||.25);
+
+  // Subtle trap bands only when they are actually in the visible price window.
   const bands=[];
-  (data.trapCandidates?.buyer||[]).slice(0,2).forEach(l=>bands.push({p:l.price,c:"rgba(240,101,101,.10)"}));
-  (data.trapCandidates?.seller||[]).slice(0,2).forEach(l=>bands.push({p:l.price,c:"rgba(49,196,141,.10)"}));
+  (data.trapCandidates?.buyer||[]).slice(0,1).forEach(l=>bands.push({p:+l.price,c:"rgba(240,101,101,.08)"}));
+  (data.trapCandidates?.seller||[]).slice(0,1).forEach(l=>bands.push({p:+l.price,c:"rgba(49,196,141,.08)"}));
   for(const b of bands){
-    const y1=y(b.p+tick*8), y2=y(b.p-tick*8);
+    if(b.p<min||b.p>max) continue;
+    const y1=y(b.p+tick*6),y2=y(b.p-tick*6);
     ctx.fillStyle=b.c;ctx.fillRect(left,Math.min(y1,y2),cw,Math.abs(y2-y1));
   }
 
-  // important levels
-  ctx.textAlign="left";
-  for(const l of levels){
-    const py=y(+l.price); if(py<top||py>top+ch) continue;
-    ctx.strokeStyle=colorForKind(l.kind);ctx.globalAlpha=.55;ctx.setLineDash([4,4]);
-    ctx.beginPath();ctx.moveTo(left,py);ctx.lineTo(w-right,py);ctx.stroke();
-    ctx.globalAlpha=1;ctx.setLineDash([]);
-    ctx.fillStyle=colorForKind(l.kind);ctx.font="10px -apple-system,BlinkMacSystemFont,Segoe UI,Arial";
-    ctx.fillText(l.label+" "+fmt(l.price),left+4,py-6);
-  }
-
-  // VWAPs
-  const vlines=[["G VWAP",data.vwap?.globex,"#b688ff"],["RTH VWAP",data.vwap?.rth,"#f2b84b"]];
-  for(const [label,p,col] of vlines){
-    if(!Number.isFinite(+p)) continue;
-    const py=y(+p);ctx.strokeStyle=col;ctx.setLineDash([8,4]);ctx.lineWidth=1.3;
-    ctx.beginPath();ctx.moveTo(left,py);ctx.lineTo(w-right,py);ctx.stroke();ctx.setLineDash([]);
-    ctx.fillStyle=col;ctx.fillText(label,left+4,py+11);
-  }
-
-  // candles
-  const bw=Math.max(2,Math.min(7,cw/bars.length*.68));
+  // Candles
+  const bw=Math.max(3,Math.min(9,cw/bars.length*.64));
   bars.forEach((b,i)=>{
     const xx=x(i),up=+b.c>=+b.o,col=up?"#31c48d":"#f06565";
     ctx.strokeStyle=col;ctx.fillStyle=col;ctx.lineWidth=1;
@@ -177,32 +180,72 @@ function drawChart(data){
     ctx.fillRect(xx-bw/2,yy,bw,hh);
   });
 
-  // delta histogram
+  // Compact level rail: short right-side rays + badges instead of labels across the entire chart.
+  ctx.font="bold 9px -apple-system,BlinkMacSystemFont,Segoe UI,Arial";
+  for(const l of visibleLevels){
+    const py=y(+l.price), col=colorForKind(l.kind);
+    ctx.strokeStyle=col;ctx.globalAlpha=.65;ctx.setLineDash([4,3]);
+    ctx.beginPath();ctx.moveTo(left+cw*.62,py);ctx.lineTo(w-right,py);ctx.stroke();
+    ctx.setLineDash([]);ctx.globalAlpha=1;
+    const label=l.label+" "+fmt(l.price);
+    const tw=Math.min(112,ctx.measureText(label).width+10);
+    ctx.fillStyle="#0d131a";ctx.fillRect(w-right-tw-2,py-7,tw,14);
+    ctx.strokeStyle=col;ctx.strokeRect(w-right-tw-2,py-7,tw,14);
+    ctx.fillStyle=col;ctx.textAlign="left";ctx.fillText(label,w-right-tw+2,py);
+  }
+
+  // VWAPs stay full-width because they are dynamic primary references.
+  const vlines=[["G VWAP",data.vwap?.globex,"#b688ff"],["RTH VWAP",data.vwap?.rth,"#f2b84b"]];
+  ctx.textAlign="left";
+  for(const [label,p,col] of vlines){
+    if(!Number.isFinite(+p)||+p<min||+p>max) continue;
+    const py=y(+p);ctx.strokeStyle=col;ctx.setLineDash([8,4]);ctx.lineWidth=1.25;
+    ctx.beginPath();ctx.moveTo(left,py);ctx.lineTo(w-right,py);ctx.stroke();ctx.setLineDash([]);
+    ctx.fillStyle=col;ctx.font="9px -apple-system,BlinkMacSystemFont,Segoe UI,Arial";
+    ctx.fillText(label,left+4,py-6);
+  }
+
+  // Horizontal time axis, Pacific/browser local time. 1h spacing on phones; 30m on wider screens.
+  const axisY=top+ch+18;
+  ctx.strokeStyle="#334052";ctx.beginPath();ctx.moveTo(left,axisY-8);ctx.lineTo(w-right,axisY-8);ctx.stroke();
+  const step=w<520?12:6;
+  ctx.font="9px -apple-system,BlinkMacSystemFont,Segoe UI,Arial";
+  ctx.textAlign="center";ctx.fillStyle="#7f8da0";
+  for(let i=0;i<bars.length;i+=step){
+    const d=new Date(bars[i].t);
+    const label=d.toLocaleTimeString([],{hour:"numeric",minute:"2-digit"});
+    ctx.fillText(label,x(i),axisY+3);
+  }
+  const lastIdx=bars.length-1;
+  const ld=new Date(bars[lastIdx].t);
+  ctx.fillText(ld.toLocaleTimeString([],{hour:"numeric",minute:"2-digit"}),x(lastIdx),axisY+3);
+
+  // Delta histogram below the time axis.
   const flow=(data.flow?.fiveMin||[]).slice(-bars.length);
   if(flow.length){
     const dmax=Math.max(1,...flow.map(b=>Math.abs(+b.delta||0)));
-    const base=h-20,dh=27;
+    const base=h-18,dh=18;
     flow.forEach((b,i)=>{
       const val=+b.delta||0,xx=left+(i+.5)*cw/flow.length;
-      ctx.fillStyle=val>=0?"rgba(49,196,141,.72)":"rgba(240,101,101,.72)";
+      ctx.fillStyle=val>=0?"rgba(49,196,141,.68)":"rgba(240,101,101,.68)";
       const bh=Math.abs(val)/dmax*dh;
       ctx.fillRect(xx-Math.max(1,bw/2),val>=0?base-bh:base,Math.max(2,bw),bh);
     });
-    ctx.fillStyle="#718094";ctx.font="9px -apple-system,BlinkMacSystemFont,Segoe UI,Arial";ctx.fillText("5m delta",left, h-5);
+    ctx.fillStyle="#718094";ctx.textAlign="left";ctx.font="8px -apple-system,BlinkMacSystemFont,Segoe UI,Arial";ctx.fillText("5m delta",left,h-4);
   }
 
-  // confirmed trap markers
+  // Confirmed trap markers
   for(const t of (data.confirmedTraps||[]).slice(0,4)){
+    if(+t.level<min||+t.level>max) continue;
     const idx=bars.findIndex(b=>Date.parse(b.t)>=Date.parse(t.time));
     if(idx<0) continue;
     const xx=x(idx),py=y(+t.level);
     ctx.fillStyle=t.side==="BUY"?"#31c48d":"#f06565";
     ctx.beginPath();ctx.arc(xx,py,5,0,Math.PI*2);ctx.fill();
-    ctx.font="bold 10px -apple-system,BlinkMacSystemFont,Segoe UI,Arial";
-    ctx.fillText(t.type,Math.min(w-right-70,xx+7),py-7);
+    ctx.font="bold 9px -apple-system,BlinkMacSystemFont,Segoe UI,Arial";
+    ctx.fillText(t.type,Math.min(w-right-65,xx+7),py-7);
   }
 }
-
 function nearestLevels(data){
   const p=+data.currentPrice;
   const ls=(data.levels||[]).filter(l=>Number.isFinite(+l.price)).sort((a,b)=>Math.abs(a.price-p)-Math.abs(b.price-p)).slice(0,6);
@@ -243,7 +286,13 @@ async function refresh(){
     status.textContent="Indicator error: "+e.message;
   }
 }
-window.addEventListener("resize",()=>refresh());
+document.querySelectorAll(".winbtn").forEach(btn=>btn.addEventListener("click",()=>{
+  chartBarCount=+btn.dataset.bars;
+  document.querySelectorAll(".winbtn").forEach(b=>b.classList.toggle("active",b===btn));
+  document.getElementById("windowLabel").textContent=(chartBarCount/12)+"h rolling";
+  if(lastData) drawChart(lastData);
+}));
+window.addEventListener("resize",()=>{if(lastData) drawChart(lastData);});
 refresh();setInterval(refresh,5000);
 </script>
 </body>
