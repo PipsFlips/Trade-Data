@@ -578,7 +578,7 @@ function buildIndicatorPayload() {
   if(signal.score<40) signal={side:"NEUTRAL",score:signal.score,reasons:signal.reasons};
 
   return {
-    schemaVersion:"1.0",
+    schemaVersion:"1.1",
     generatedUtc:DateTime.utc().toISO(),
     generatedPacific:nowPT().toISO(),
     connected,
@@ -598,7 +598,7 @@ function buildIndicatorPayload() {
     confirmedTraps:traps.slice(0,8),
     signal,
     profiles:{currentGlobex:globexExact,currentRTH:rthExact},
-    bars5m:(latestSnapshot.bars?.fiveMinRecent||[]).slice(-180)
+    bars5m:(latestSnapshot.bars?.fiveMinRecent||[]).slice(-400)
   };
 }
 
