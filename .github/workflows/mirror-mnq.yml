@@ -1,1 +1,82 @@
+name: Mirror MNQ morning data
 
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: "24 12 * * 1-5"
+    - cron: "24 13 * * 1-5"
+
+permissions:
+  contents: write
+
+jobs:
+  mirror:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Guard Pacific schedule
+        if: github.event_name == 'schedule'
+        run: |
+          PT_HOUR="$(TZ=America/Los_Angeles date +%H)"
+          PT_DOW="$(TZ=America/Los_Angeles date +%u)"
+          echo "Pacific hour: $PT_HOUR, weekday: $PT_DOW"
+          if [ "$PT_HOUR" != "05" ] || [ "$PT_DOW" -gt 5 ]; then
+            echo "Duplicate DST cron or non-weekday. Skipping."
+            exit 78
+          fi
+
+      - name: Fetch Railway MNQ morning JSON
+        run: |
+          mkdir -p public
+
+          curl \
+            --fail \
+            --silent \
+            --show-error \
+            --location \
+            --retry 3 \
+            --retry-delay 5 \
+            --connect-timeout 20 \
+            --max-time 60 \
+            "https://trade-data-production.up.railway.app/mnq-morning.json" \
+            -o /tmp/mnq-morning.json
+
+          jq -e '
+            .snapshot != null
+            and .snapshot.contract.name != null
+            and .snapshot.latest.bar5m != null
+            and .snapshot.generatedUtc != null
+          ' /tmp/mnq-morning.json > /dev/null
+
+          SNAPSHOT_TS="$(jq -r '.snapshot.generatedUtc' /tmp/mnq-morning.json)"
+          SNAPSHOT_EPOCH="$(date -d "$SNAPSHOT_TS" +%s)"
+          NOW_EPOCH="$(date +%s)"
+          AGE=$((NOW_EPOCH - SNAPSHOT_EPOCH))
+
+          echo "Snapshot age: ${AGE}s"
+
+          if [ "$AGE" -gt 900 ]; then
+            echo "Railway snapshot is more than 15 minutes old. Refusing to publish stale data."
+            exit 1
+          fi
+
+          cp /tmp/mnq-morning.json public/mnq-morning.json
+
+      - name: Commit mirrored market data
+        run: |
+          git config user.name "mnq-mirror-bot"
+          git config user.email "actions@users.noreply.github.com"
+
+          git add public/mnq-morning.json
+
+          if git diff --cached --quiet; then
+            echo "No market-data changes to commit."
+            exit 0
+          fi
+
+          git commit -m "Mirror MNQ morning data"
+          git push
