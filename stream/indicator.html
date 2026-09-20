@@ -67,6 +67,7 @@ canvas{display:block;width:100%;height:410px;border-radius:8px;background:#0d131
     <div class="card"><div class="k">NY VWAP</div><div class="v" id="rvwap">—</div></div>
     <div class="card"><div class="k">1m Delta</div><div class="v" id="delta1">—</div></div>
     <div class="card"><div class="k">5m Delta</div><div class="v" id="delta5">—</div></div>
+    <div class="card"><div class="k">Session CVD 15:00+</div><div class="v" id="sessionCvd">—</div></div>
     <div class="card"><div class="k">NY CVD 06:30+</div><div class="v" id="cvd">—</div></div>
   </div>
 
@@ -81,6 +82,11 @@ canvas{display:block;width:100%;height:410px;border-radius:8px;background:#0d131
       <button class="winbtn active" data-bars="48">4h</button>
       <button class="winbtn" data-bars="72">6h</button>
       <button class="winbtn" data-bars="96">8h</button>
+    </div>
+    <div style="display:flex;gap:12px;align-items:center;margin:0 0 5px 2px;font-size:9px;color:var(--muted)">
+      <span><i style="display:inline-block;width:12px;border-top:1px dotted #f2c94c;vertical-align:middle;margin-right:4px"></i>Asia 17:00</span>
+      <span><i style="display:inline-block;width:12px;border-top:1px dotted #57a4ff;vertical-align:middle;margin-right:4px"></i>London 00:00</span>
+      <span><i style="display:inline-block;width:12px;border-top:1px dotted #ffffff;vertical-align:middle;margin-right:4px"></i>NY 06:30</span>
     </div>
     <canvas id="chart"></canvas>
   </div>
@@ -106,7 +112,18 @@ canvas{display:block;width:100%;height:410px;border-radius:8px;background:#0d131
 <script>
 const fmt=n=>Number.isFinite(+n)?(+n).toLocaleString(undefined,{minimumFractionDigits:2,maximumFractionDigits:2}):"—";
 const nfmt=n=>Number.isFinite(+n)?Math.round(+n).toLocaleString():"—";
-const colorForKind=k=>k==="support"?"#31c48d":k==="resistance"?"#f06565":k==="profile"?"#57a4ff":"#a6b2bf";
+const colorForKind=k=>k==="support"?"#31c48d":k==="resistance"?"#f06565":k==="profile"?"#9aa7b4":"#a6b2bf";
+const levelColor=l=>{
+  const m={
+    pdh:"#31c48d",
+    pdl:"#f06565",
+    prevPoc:"#9b3030",
+    asiaH:"#f2c94c",asiaL:"#f2c94c",
+    londonH:"#57a4ff",londonL:"#57a4ff",
+    pwh:"#ffffff",pwl:"#ffffff"
+  };
+  return m[l.id]||colorForKind(l.kind);
+};
 let chartBarCount=48;
 let lastData=null;
 
@@ -116,27 +133,25 @@ function ptParts(ts){
   return {date:o.year+"-"+o.month+"-"+o.day,hour:+o.hour,minute:+o.minute,mins:(+o.hour)*60+(+o.minute)};
 }
 function vwapSeries(allBars,mode){
-  let pv=0,vol=0,lastKey=null,out=[];
+  let pv=0,vol=0,out=[],active=false;
   for(const b of allBars){
     const p=ptParts(b.t), mins=p.mins;
-    let include=false,key=null,reset=false;
     if(mode==="session"){
-      include=(mins>=900||mins<840);
-      // Session date is the calendar date after 15:00, otherwise current date.
-      key=mins>=900 ? p.date+"-next" : p.date;
-      if(mins===900) reset=true;
+      // CME trading session: reset 15:00 PT, plot through 14:00 PT.
+      if(mins===900){pv=0;vol=0;active=true;}
+      if(mins>=840 && mins<900) active=false;
     }else{
-      include=(mins>=390&&mins<780);
-      key=p.date;
-      if(mins===390) reset=true;
+      // NY/RTH only: reset 06:30 PT and stop plotting at 13:00 PT.
+      if(mins===390){pv=0;vol=0;active=true;}
+      if(mins>=780 || mins<390) active=false;
     }
-    if(reset||key!==lastKey){pv=0;vol=0;}
-    lastKey=key;
-    if(include){
+    if(active){
       const v=+b.v||0,tp=(+b.h + +b.l + +b.c)/3;
       if(v>0){pv+=tp*v;vol+=v;}
       out.push({t:b.t,v:vol?pv/vol:null});
-    }else out.push({t:b.t,v:null});
+    }else{
+      out.push({t:b.t,v:null});
+    }
   }
   return out;
 }
@@ -188,6 +203,22 @@ function drawChart(data){
     .sort((a,b)=>(b.priority-a.priority) || (Math.abs(+a.price-current)-Math.abs(+b.price-current)))
     .slice(0,5);
 
+  // Session-start markers: low-opacity dotted vertical lines.
+  const sessionStarts=[
+    {mins:1020,col:"#f2c94c"}, // Asia 17:00 PT
+    {mins:0,col:"#57a4ff"},    // London 00:00 PT
+    {mins:390,col:"#ffffff"}   // NY 06:30 PT
+  ];
+  for(let i=0;i<bars.length;i++){
+    const mins=ptParts(bars[i].t).mins;
+    const mark=sessionStarts.find(z=>z.mins===mins);
+    if(!mark) continue;
+    ctx.save();
+    ctx.strokeStyle=mark.col;ctx.globalAlpha=.26;ctx.setLineDash([3,5]);ctx.lineWidth=1;
+    ctx.beginPath();ctx.moveTo(x(i),top);ctx.lineTo(x(i),top+ch);ctx.stroke();
+    ctx.restore();
+  }
+
   // Candles first
   const bw=Math.max(3,Math.min(9,cw/bars.length*.64));
   bars.forEach((b,i)=>{
@@ -202,7 +233,7 @@ function drawChart(data){
   const labelX=left+cw*.38;
   ctx.font="bold 9px -apple-system,BlinkMacSystemFont,Segoe UI,Arial";
   for(const l of visibleLevels){
-    const py=y(+l.price), col=colorForKind(l.kind);
+    const py=y(+l.price), col=levelColor(l);
     ctx.strokeStyle=col;ctx.globalAlpha=.48;ctx.setLineDash([3,4]);
     ctx.beginPath();ctx.moveTo(left,py);ctx.lineTo(w-right,py);ctx.stroke();
     ctx.setLineDash([]);ctx.globalAlpha=1;
@@ -212,46 +243,49 @@ function drawChart(data){
     ctx.fillStyle=col;ctx.textAlign="center";ctx.fillText(label,labelX,py-8);
   }
 
-  // Confirmed trap zones only. No speculative candidate shading.
-  for(const t of (data.confirmedTraps||[]).slice(0,4)){
+  // Confirmed trap zones only. Rectangles extend from the trap event forward.
+  // Requested convention: trapped buyers = green; trapped sellers = red; 10% opacity.
+  for(const t of (data.confirmedTraps||[]).slice(0,6)){
     const lp=+t.level;if(lp<min||lp>max) continue;
+    const idx=bars.findIndex(b=>Date.parse(b.t)>=Date.parse(t.time));
+    if(idx<0) continue;
     const tick=+(data.contract?.tickSize||.25);
     const half=Math.max(1.5,tick*6);
     const y1=y(lp+half),y2=y(lp-half);
-    const col=t.side==="BUY"?"rgba(49,196,141,.13)":"rgba(240,101,101,.13)";
-    const edge=t.side==="BUY"?"#31c48d":"#f06565";
-    ctx.fillStyle=col;ctx.fillRect(left,Math.min(y1,y2),cw,Math.abs(y2-y1));
-    ctx.strokeStyle=edge;ctx.globalAlpha=.6;ctx.setLineDash([5,4]);
-    ctx.beginPath();ctx.moveTo(left, y(lp));ctx.lineTo(w-right,y(lp));ctx.stroke();ctx.setLineDash([]);ctx.globalAlpha=1;
-    const tag=(t.type==="buyer-trap"?"BUYER TRAP":"SELLER TRAP")+" · "+t.label;
+    const buyerTrap=t.type==="buyer-trap";
+    const fill=buyerTrap?"rgba(49,196,141,.10)":"rgba(240,101,101,.10)";
+    const edge=buyerTrap?"#31c48d":"#f06565";
+    const x1=Math.max(left,x(idx)-bw);
+    ctx.fillStyle=fill;ctx.fillRect(x1,Math.min(y1,y2),(w-right)-x1,Math.abs(y2-y1));
+    ctx.strokeStyle=edge;ctx.globalAlpha=.42;ctx.setLineDash([4,5]);
+    ctx.strokeRect(x1,Math.min(y1,y2),(w-right)-x1,Math.abs(y2-y1));
+    ctx.setLineDash([]);ctx.globalAlpha=1;
+    // Label is anchored left of the live-price area.
+    const tag=buyerTrap?"TRAPPED BUYERS":"TRAPPED SELLERS";
     ctx.font="bold 9px -apple-system,BlinkMacSystemFont,Segoe UI,Arial";
-    const tw=Math.min(130,ctx.measureText(tag).width+10);
-    ctx.fillStyle="rgba(13,19,26,.88)";ctx.fillRect(left+cw*.18,Math.min(y1,y2)+2,tw,13);
-    ctx.fillStyle=edge;ctx.textAlign="left";ctx.fillText(tag,left+cw*.18+5,Math.min(y1,y2)+8);
+    ctx.fillStyle=edge;ctx.textAlign="left";
+    ctx.fillText(tag,left+cw*.20,Math.min(y1,y2)-5);
   }
 
-  // Running VWAP curves: white = 15:00-14:00 session, yellow = NY 06:30-13:00.
+  // Running VWAP curves. No on-chart labels.
+  // White = full 15:00-14:00 session VWAP. Yellow = NY 06:30-13:00 only.
   const sessionSeries=vwapSeries(allBars,"session");
   const nySeries=vwapSeries(allBars,"ny");
   const firstVisible=Math.max(0,allBars.length-bars.length);
-  function drawVwap(series,col,label){
+  function drawVwap(series,col){
     ctx.strokeStyle=col;ctx.lineWidth=1.8;ctx.setLineDash([]);
-    ctx.beginPath();let started=false,lastPoint=null;
+    let started=false;
+    ctx.beginPath();
     for(let i=0;i<bars.length;i++){
       const p=series[firstVisible+i]?.v;
       if(!Number.isFinite(+p)){started=false;continue;}
       const xx=x(i),py=y(+p);
       if(!started){ctx.moveTo(xx,py);started=true;}else ctx.lineTo(xx,py);
-      lastPoint={x:xx,y:py};
     }
     ctx.stroke();
-    if(lastPoint){
-      ctx.font="bold 9px -apple-system,BlinkMacSystemFont,Segoe UI,Arial";
-      ctx.textAlign="right";ctx.fillStyle=col;ctx.fillText(label,w-right-4,lastPoint.y-6);
-    }
   }
-  drawVwap(sessionSeries,"#ffffff","Session VWAP");
-  drawVwap(nySeries,"#f2c94c","NY VWAP");
+  drawVwap(sessionSeries,"#ffffff");
+  drawVwap(nySeries,"#f2c94c");
 
   // Horizontal time axis.
   const axisY=top+ch+18;
@@ -291,7 +325,7 @@ function drawChart(data){
     if(+t.level<min||+t.level>max) continue;
     const idx=bars.findIndex(b=>Date.parse(b.t)>=Date.parse(t.time));
     if(idx<0) continue;
-    ctx.fillStyle=t.side==="BUY"?"#31c48d":"#f06565";
+    ctx.fillStyle=t.type==="buyer-trap"?"#31c48d":"#f06565";
     ctx.beginPath();ctx.arc(x(idx),y(+t.level),4,0,Math.PI*2);ctx.fill();
   }
 }
@@ -299,7 +333,7 @@ function nearestLevels(data){
   const p=+data.currentPrice;
   const ls=(data.levels||[]).filter(l=>Number.isFinite(+l.price)).sort((a,b)=>Math.abs(a.price-p)-Math.abs(b.price-p)).slice(0,6);
   const el=document.getElementById("nearest");
-  el.innerHTML=ls.map(l=>'<div class="row"><span>'+l.label+'</span><b style="color:'+colorForKind(l.kind)+'">'+fmt(l.price)+'</b></div>').join("")||'<div class="reason">No levels yet.</div>';
+  el.innerHTML=ls.map(l=>'<div class="row"><span>'+l.label+'</span><b style="color:'+levelColor(l)+'">'+fmt(l.price)+'</b></div>').join("")||'<div class="reason">No levels yet.</div>';
 }
 
 function trapRows(data){
@@ -325,6 +359,9 @@ async function refresh(){
     const d5=d.flow?.fiveMin?.at(-1)?.delta;
     document.getElementById("delta5").textContent=(+d5>0?"+":"")+nfmt(d5);
     document.getElementById("delta5").className="v "+(+d5>0?"buy":+d5<0?"sell":"");
+    const sessionCvd=d.flow?.currentGlobexCvd;
+    document.getElementById("sessionCvd").textContent=(+sessionCvd>0?"+":"")+nfmt(sessionCvd);
+    document.getElementById("sessionCvd").className="v "+(+sessionCvd>0?"buy":+sessionCvd<0?"sell":"");
     const cvd=d.flow?.currentRthCvd;
     document.getElementById("cvd").textContent=(+cvd>0?"+":"")+nfmt(cvd);
     document.getElementById("cvd").className="v "+(+cvd>0?"buy":+cvd<0?"sell":"");
