@@ -524,6 +524,8 @@ function buildIndicatorPayload() {
     {id:"pdh",label:"PDH",price:a.previousRTH?.high,kind:"resistance",priority:100},
     {id:"pdl",label:"PDL",price:a.previousRTH?.low,kind:"support",priority:100},
     {id:"pdc",label:"PDC",price:a.previousRTH?.close,kind:"reference",priority:65},
+    {id:"pwh",label:"PWH",price:a.previousCMETradingWeek?.high,kind:"weekly",priority:78},
+    {id:"pwl",label:"PWL",price:a.previousCMETradingWeek?.low,kind:"weekly",priority:78},
     {id:"onh",label:"ON High",price:a.currentOvernight?.high,kind:"resistance",priority:98},
     {id:"onl",label:"ON Low",price:a.currentOvernight?.low,kind:"support",priority:98},
     {id:"asiaH",label:"Asia H",price:a.asia?.high,kind:"resistance",priority:80},
@@ -578,7 +580,7 @@ function buildIndicatorPayload() {
   if(signal.score<40) signal={side:"NEUTRAL",score:signal.score,reasons:signal.reasons};
 
   return {
-    schemaVersion:"1.1",
+    schemaVersion:"1.2",
     generatedUtc:DateTime.utc().toISO(),
     generatedPacific:nowPT().toISO(),
     connected,
