@@ -200,6 +200,14 @@ function drawChart(data){
     ctx.fillStyle="#718094";ctx.fillText(fmt(price),w-6,py);
   }
 
+  // Small active volatility readout in the upper-left chart margin.
+  const atr5=+data.volatility?.atr5m20;
+  if(Number.isFinite(atr5)){
+    ctx.font="bold 9px -apple-system,BlinkMacSystemFont,Segoe UI,Arial";
+    ctx.textAlign="left";ctx.fillStyle="rgba(210,220,230,.78)";
+    ctx.fillText("ATR5 "+atr5.toFixed(1),left+3,top+10);
+  }
+
   const current=+data.currentPrice;
   const visibleLevels=(data.levels||[])
     .filter(l=>Number.isFinite(+l.price) && +l.price>=min && +l.price<=max)
