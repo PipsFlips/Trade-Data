@@ -1,0 +1,250 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover" />
+<meta name="theme-color" content="#0b0f14" />
+<title>PipsFlips MNQ Indicator</title>
+<style>
+:root{--bg:#0b0f14;--panel:#111821;--panel2:#151e29;--text:#eef3f8;--muted:#8f9baa;--line:#263140;--green:#31c48d;--red:#f06565;--blue:#57a4ff;--amber:#f2b84b}
+*{box-sizing:border-box}
+html,body{margin:0;background:var(--bg);color:var(--text);font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Arial,sans-serif}
+body{padding:env(safe-area-inset-top) env(safe-area-inset-right) calc(14px + env(safe-area-inset-bottom)) env(safe-area-inset-left)}
+.wrap{max-width:980px;margin:0 auto;padding:10px}
+.top{display:flex;align-items:flex-start;justify-content:space-between;gap:10px;margin-bottom:10px}
+.brand{font-size:12px;letter-spacing:.12em;text-transform:uppercase;color:var(--muted)}
+.price{font-size:28px;font-weight:750;line-height:1.05;margin-top:3px}
+.sub{font-size:12px;color:var(--muted);margin-top:4px}
+.signal{min-width:105px;text-align:center;border:1px solid var(--line);background:var(--panel);padding:9px 10px;border-radius:12px}
+.signal .s{font-weight:800;font-size:18px}
+.signal .score{font-size:11px;color:var(--muted);margin-top:2px}
+.buy{color:var(--green)} .sell{color:var(--red)} .neutral{color:var(--amber)}
+.grid{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:7px;margin-bottom:9px}
+.card{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:8px 9px;min-width:0}
+.card .k{font-size:10px;color:var(--muted);text-transform:uppercase;letter-spacing:.06em}
+.card .v{font-size:15px;font-weight:700;margin-top:3px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.chartCard{background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:8px;margin-bottom:9px}
+.chartHead{display:flex;justify-content:space-between;align-items:center;margin-bottom:5px}
+.chartTitle{font-size:13px;font-weight:700}
+.chartHint{font-size:10px;color:var(--muted)}
+canvas{display:block;width:100%;height:410px;border-radius:8px;background:#0d131a}
+.section{background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:9px;margin-bottom:9px}
+.section h3{font-size:12px;margin:0 0 7px;color:#cbd5df;text-transform:uppercase;letter-spacing:.06em}
+.rows{display:grid;grid-template-columns:1fr 1fr;gap:6px}
+.row{display:flex;justify-content:space-between;gap:10px;background:var(--panel2);border-radius:8px;padding:7px 8px;font-size:12px}
+.row span:first-child{color:var(--muted)}
+.reason{font-size:12px;color:#c9d2dc;line-height:1.4}
+.dot{display:inline-block;width:7px;height:7px;border-radius:50%;margin-right:5px;background:var(--muted)}
+.dot.buy{background:var(--green)} .dot.sell{background:var(--red)}
+.status{font-size:11px;color:var(--muted);text-align:center;padding:4px 0}
+@media (max-width:600px){
+  .wrap{padding:8px}
+  .price{font-size:25px}
+  .grid{grid-template-columns:repeat(2,minmax(0,1fr))}
+  canvas{height:350px}
+  .rows{grid-template-columns:1fr}
+}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <div class="top">
+    <div>
+      <div class="brand">PipsFlips • MNQ Live</div>
+      <div class="price" id="price">—</div>
+      <div class="sub"><span id="contract">MNQ</span> · <span id="stamp">waiting for data</span></div>
+    </div>
+    <div class="signal">
+      <div class="s neutral" id="signal">NEUTRAL</div>
+      <div class="score" id="score">0 score</div>
+    </div>
+  </div>
+
+  <div class="grid">
+    <div class="card"><div class="k">Globex VWAP</div><div class="v" id="gvwap">—</div></div>
+    <div class="card"><div class="k">RTH VWAP</div><div class="v" id="rvwap">—</div></div>
+    <div class="card"><div class="k">5m Delta</div><div class="v" id="delta5">—</div></div>
+    <div class="card"><div class="k">RTH CVD</div><div class="v" id="cvd">—</div></div>
+  </div>
+
+  <div class="chartCard">
+    <div class="chartHead">
+      <div class="chartTitle">5-minute structure + live levels</div>
+      <div class="chartHint">drag not required • auto-refresh</div>
+    </div>
+    <canvas id="chart"></canvas>
+  </div>
+
+  <div class="section">
+    <h3>Nearest actionable levels</h3>
+    <div class="rows" id="nearest"></div>
+  </div>
+
+  <div class="section">
+    <h3>Trap / signal context</h3>
+    <div class="reason" id="reason">No confirmed trap signal yet.</div>
+  </div>
+
+  <div class="section">
+    <h3>Confirmed traps</h3>
+    <div class="rows" id="traps"></div>
+  </div>
+
+  <div class="status" id="status">Connecting…</div>
+</div>
+
+<script>
+const fmt=n=>Number.isFinite(+n)?(+n).toLocaleString(undefined,{minimumFractionDigits:2,maximumFractionDigits:2}):"—";
+const nfmt=n=>Number.isFinite(+n)?Math.round(+n).toLocaleString():"—";
+const colorForKind=k=>k==="support"?"#31c48d":k==="resistance"?"#f06565":k==="profile"?"#57a4ff":"#a6b2bf";
+
+function resizeCanvas(c){
+  const dpr=Math.min(window.devicePixelRatio||1,2);
+  const rect=c.getBoundingClientRect();
+  c.width=Math.max(300,Math.floor(rect.width*dpr));
+  c.height=Math.max(260,Math.floor(rect.height*dpr));
+  const ctx=c.getContext("2d");
+  ctx.setTransform(dpr,0,0,dpr,0,0);
+  return {w:rect.width,h:rect.height,ctx};
+}
+
+function drawChart(data){
+  const c=document.getElementById("chart");
+  const {w,h,ctx}=resizeCanvas(c);
+  ctx.clearRect(0,0,w,h);
+  ctx.fillStyle="#0d131a"; ctx.fillRect(0,0,w,h);
+
+  const bars=(data.bars5m||[]).slice(-90);
+  if(!bars.length){ctx.fillStyle="#8f9baa";ctx.fillText("Waiting for 5m bars…",12,22);return;}
+
+  const levels=(data.levels||[]).slice(0,14);
+  const vwaps=[data.vwap?.globex,data.vwap?.rth].filter(Number.isFinite);
+  let min=Math.min(...bars.map(b=>+b.l),...levels.map(l=>+l.price),...vwaps);
+  let max=Math.max(...bars.map(b=>+b.h),...levels.map(l=>+l.price),...vwaps);
+  const pad=(max-min)*.08||20; min-=pad; max+=pad;
+
+  const left=6,right=66,top=8,bottom=58;
+  const cw=w-left-right,ch=h-top-bottom;
+  const y=p=>top+(max-p)/(max-min)*ch;
+  const x=i=>left+(i+.5)*cw/bars.length;
+
+  ctx.strokeStyle="#1d2733";ctx.lineWidth=1;
+  ctx.font="10px -apple-system,BlinkMacSystemFont,Segoe UI,Arial";
+  ctx.textAlign="right";ctx.textBaseline="middle";
+  for(let i=0;i<6;i++){
+    const py=top+i*ch/5, price=max-i*(max-min)/5;
+    ctx.beginPath();ctx.moveTo(left,py);ctx.lineTo(w-right,py);ctx.stroke();
+    ctx.fillStyle="#718094";ctx.fillText(fmt(price),w-6,py);
+  }
+
+  // trap candidate bands
+  const tick=+(data.contract?.tickSize||.25);
+  const bands=[];
+  (data.trapCandidates?.buyer||[]).slice(0,2).forEach(l=>bands.push({p:l.price,c:"rgba(240,101,101,.10)"}));
+  (data.trapCandidates?.seller||[]).slice(0,2).forEach(l=>bands.push({p:l.price,c:"rgba(49,196,141,.10)"}));
+  for(const b of bands){
+    const y1=y(b.p+tick*8), y2=y(b.p-tick*8);
+    ctx.fillStyle=b.c;ctx.fillRect(left,Math.min(y1,y2),cw,Math.abs(y2-y1));
+  }
+
+  // important levels
+  ctx.textAlign="left";
+  for(const l of levels){
+    const py=y(+l.price); if(py<top||py>top+ch) continue;
+    ctx.strokeStyle=colorForKind(l.kind);ctx.globalAlpha=.55;ctx.setLineDash([4,4]);
+    ctx.beginPath();ctx.moveTo(left,py);ctx.lineTo(w-right,py);ctx.stroke();
+    ctx.globalAlpha=1;ctx.setLineDash([]);
+    ctx.fillStyle=colorForKind(l.kind);ctx.font="10px -apple-system,BlinkMacSystemFont,Segoe UI,Arial";
+    ctx.fillText(l.label+" "+fmt(l.price),left+4,py-6);
+  }
+
+  // VWAPs
+  const vlines=[["G VWAP",data.vwap?.globex,"#b688ff"],["RTH VWAP",data.vwap?.rth,"#f2b84b"]];
+  for(const [label,p,col] of vlines){
+    if(!Number.isFinite(+p)) continue;
+    const py=y(+p);ctx.strokeStyle=col;ctx.setLineDash([8,4]);ctx.lineWidth=1.3;
+    ctx.beginPath();ctx.moveTo(left,py);ctx.lineTo(w-right,py);ctx.stroke();ctx.setLineDash([]);
+    ctx.fillStyle=col;ctx.fillText(label,left+4,py+11);
+  }
+
+  // candles
+  const bw=Math.max(2,Math.min(7,cw/bars.length*.68));
+  bars.forEach((b,i)=>{
+    const xx=x(i),up=+b.c>=+b.o,col=up?"#31c48d":"#f06565";
+    ctx.strokeStyle=col;ctx.fillStyle=col;ctx.lineWidth=1;
+    ctx.beginPath();ctx.moveTo(xx,y(+b.h));ctx.lineTo(xx,y(+b.l));ctx.stroke();
+    const yy=Math.min(y(+b.o),y(+b.c)),hh=Math.max(1,Math.abs(y(+b.o)-y(+b.c)));
+    ctx.fillRect(xx-bw/2,yy,bw,hh);
+  });
+
+  // delta histogram
+  const flow=(data.flow?.fiveMin||[]).slice(-bars.length);
+  if(flow.length){
+    const dmax=Math.max(1,...flow.map(b=>Math.abs(+b.delta||0)));
+    const base=h-20,dh=27;
+    flow.forEach((b,i)=>{
+      const val=+b.delta||0,xx=left+(i+.5)*cw/flow.length;
+      ctx.fillStyle=val>=0?"rgba(49,196,141,.72)":"rgba(240,101,101,.72)";
+      const bh=Math.abs(val)/dmax*dh;
+      ctx.fillRect(xx-Math.max(1,bw/2),val>=0?base-bh:base,Math.max(2,bw),bh);
+    });
+    ctx.fillStyle="#718094";ctx.font="9px -apple-system,BlinkMacSystemFont,Segoe UI,Arial";ctx.fillText("5m delta",left, h-5);
+  }
+
+  // confirmed trap markers
+  for(const t of (data.confirmedTraps||[]).slice(0,4)){
+    const idx=bars.findIndex(b=>Date.parse(b.t)>=Date.parse(t.time));
+    if(idx<0) continue;
+    const xx=x(idx),py=y(+t.level);
+    ctx.fillStyle=t.side==="BUY"?"#31c48d":"#f06565";
+    ctx.beginPath();ctx.arc(xx,py,5,0,Math.PI*2);ctx.fill();
+    ctx.font="bold 10px -apple-system,BlinkMacSystemFont,Segoe UI,Arial";
+    ctx.fillText(t.type,Math.min(w-right-70,xx+7),py-7);
+  }
+}
+
+function nearestLevels(data){
+  const p=+data.currentPrice;
+  const ls=(data.levels||[]).filter(l=>Number.isFinite(+l.price)).sort((a,b)=>Math.abs(a.price-p)-Math.abs(b.price-p)).slice(0,6);
+  const el=document.getElementById("nearest");
+  el.innerHTML=ls.map(l=>'<div class="row"><span>'+l.label+'</span><b style="color:'+colorForKind(l.kind)+'">'+fmt(l.price)+'</b></div>').join("")||'<div class="reason">No levels yet.</div>';
+}
+
+function trapRows(data){
+  const el=document.getElementById("traps");
+  const ts=(data.confirmedTraps||[]).slice(0,6);
+  el.innerHTML=ts.map(t=>'<div class="row"><span><i class="dot '+(t.side==="BUY"?"buy":"sell")+'"></i>'+t.type+' · '+t.label+'</span><b>'+fmt(t.level)+'</b></div>').join("")||'<div class="reason">No confirmed traps in the recent window.</div>';
+}
+
+async function refresh(){
+  const status=document.getElementById("status");
+  try{
+    const r=await fetch("/mnq-indicator.json",{cache:"no-store"});
+    if(!r.ok) throw new Error("HTTP "+r.status);
+    const d=await r.json();
+    document.getElementById("price").textContent=fmt(d.currentPrice);
+    document.getElementById("contract").textContent=d.contract?.name||"MNQ";
+    document.getElementById("stamp").textContent=new Date(d.generatedUtc).toLocaleTimeString([], {hour:"numeric",minute:"2-digit",second:"2-digit"});
+    document.getElementById("gvwap").textContent=fmt(d.vwap?.globex);
+    document.getElementById("rvwap").textContent=fmt(d.vwap?.rth);
+    const d5=d.flow?.fiveMin?.at(-1)?.delta;
+    document.getElementById("delta5").textContent=(+d5>0?"+":"")+nfmt(d5);
+    document.getElementById("delta5").className="v "+(+d5>0?"buy":+d5<0?"sell":"");
+    const cvd=d.flow?.currentRthCvd;
+    document.getElementById("cvd").textContent=(+cvd>0?"+":"")+nfmt(cvd);
+    document.getElementById("cvd").className="v "+(+cvd>0?"buy":+cvd<0?"sell":"");
+    const sig=d.signal?.side||"NEUTRAL", se=document.getElementById("signal");
+    se.textContent=sig;se.className="s "+(sig==="BUY"?"buy":sig==="SELL"?"sell":"neutral");
+    document.getElementById("score").textContent=(d.signal?.score||0)+" score";
+    document.getElementById("reason").textContent=(d.signal?.reasons||[]).join(" • ")||"No confirmed trap signal yet.";
+    nearestLevels(d);trapRows(d);drawChart(d);
+    status.textContent=(d.connected?"Live feed connected":"Feed reconnecting")+" · auto refresh 5s";
+  }catch(e){
+    status.textContent="Indicator error: "+e.message;
+  }
+}
+window.addEventListener("resize",()=>refresh());
+refresh();setInterval(refresh,5000);
+</script>
+</body>
+</html>
