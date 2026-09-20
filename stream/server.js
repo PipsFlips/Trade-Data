@@ -887,19 +887,27 @@ async function connectStream() {
     .build();
 
   conn.on("GatewayQuote",(id,d)=>{
-    quoteEventsReceived++;
-    lastRawQuoteEvent={id,receivedAt:new Date().toISOString(),lastPrice:d?.lastPrice??d?.price??null,bid:d?.bestBid??d?.bid??null,ask:d?.bestAsk??d?.ask??null};
-    if(id===contract.id || id===contract.symbolId || d?.symbolId===contract.symbolId) latestQuote=d;
+    const rows=Array.isArray(d)?d:[d];
+    quoteEventsReceived+=rows.length;
+    for(const row of rows){
+      lastRawQuoteEvent={id,receivedAt:new Date().toISOString(),lastPrice:row?.lastPrice??row?.price??null,bid:row?.bestBid??row?.bid??null,ask:row?.bestAsk??row?.ask??null};
+      if(id===contract.id || id===contract.symbolId || row?.symbolId===contract.symbolId) latestQuote=row;
+    }
   });
   conn.on("GatewayDepth",(id,d)=>{
-    depthEventsReceived++;
-    lastRawDepthEvent={id,receivedAt:new Date().toISOString(),symbolId:d?.symbolId||null,type:d?.type??null,price:d?.price??null,volume:d?.volume??null};
+    const rows=Array.isArray(d)?d:[d];
+    depthEventsReceived+=rows.length;
+    const row=rows.at(-1)||{};
+    lastRawDepthEvent={id,receivedAt:new Date().toISOString(),symbolId:row?.symbolId||null,type:row?.type??null,price:row?.price??null,volume:row?.volume??null};
   });
   conn.on("GatewayTrade",(id,d)=>{
-    tradeEventsReceived++;
-    lastRawTradeEvent={id,receivedAt:new Date().toISOString(),symbolId:d?.symbolId||null,price:d?.price??null,volume:d?.volume??null,type:d?.type??null,timestamp:d?.timestamp??null};
-    const match=id===contract.id || id===contract.symbolId || d?.symbolId===contract.symbolId;
-    if(match){ tradeEventsMatched++; addTrade(d); }
+    const rows=Array.isArray(d)?d:[d];
+    tradeEventsReceived+=rows.length;
+    for(const row of rows){
+      lastRawTradeEvent={id,receivedAt:new Date().toISOString(),symbolId:row?.symbolId||null,price:row?.price??null,volume:row?.volume??null,type:row?.type??null,timestamp:row?.timestamp??null};
+      const match=id===contract.id || id===contract.symbolId || row?.symbolId===contract.symbolId;
+      if(match){ tradeEventsMatched++; addTrade(row); }
+    }
   });
 
   const subscribe=async()=>{
