@@ -24,6 +24,7 @@ jobs:
           PT_HOUR="$(TZ=America/Los_Angeles date +%H)"
           PT_DOW="$(TZ=America/Los_Angeles date +%u)"
           echo "Pacific hour: $PT_HOUR, weekday: $PT_DOW"
+
           if [ "$PT_HOUR" != "05" ] || [ "$PT_DOW" -gt 5 ]; then
             echo "Duplicate DST cron or non-weekday. Skipping."
             exit 78
@@ -31,7 +32,7 @@ jobs:
 
       - name: Fetch Railway MNQ morning JSON
         run: |
-          mkdir -p public
+          mkdir -p public mnq
 
           curl \
             --fail \
@@ -66,12 +67,45 @@ jobs:
 
           cp /tmp/mnq-morning.json public/mnq-morning.json
 
+      - name: Build static GitHub Pages HTML
+        run: |
+          GENERATED_UTC="$(jq -r '.generatedUtc // .snapshot.generatedUtc' /tmp/mnq-morning.json)"
+          GENERATED_PT="$(jq -r '.generatedPacific // .snapshot.generatedPacific // "unknown"' /tmp/mnq-morning.json)"
+          CONTRACT="$(jq -r '.snapshot.contract.name // "unknown"' /tmp/mnq-morning.json)"
+
+          {
+            printf '%s\n' '<!doctype html>'
+            printf '%s\n' '<html lang="en">'
+            printf '%s\n' '<head>'
+            printf '%s\n' '  <meta charset="utf-8">'
+            printf '%s\n' '  <meta name="viewport" content="width=device-width,initial-scale=1">'
+            printf '%s\n' '  <meta name="robots" content="noindex,nofollow">'
+            printf '%s\n' '  <title>MNQ Morning Data</title>'
+            printf '%s\n' '  <style>'
+            printf '%s\n' '    body{font-family:ui-monospace,SFMono-Regular,Menlo,Monaco,Consolas,monospace;margin:24px;line-height:1.35;background:#fff;color:#111}'
+            printf '%s\n' '    h1{font-family:system-ui,sans-serif;margin-bottom:6px}'
+            printf '%s\n' '    .meta{font-family:system-ui,sans-serif;color:#555;margin-bottom:18px}'
+            printf '%s\n' '    pre{white-space:pre-wrap;word-break:break-word}'
+            printf '%s\n' '  </style>'
+            printf '%s\n' '</head>'
+            printf '%s\n' '<body>'
+            printf '%s\n' '  <h1>MNQ Morning Data</h1>'
+            printf '  <div class="meta">Contract: %s · Generated UTC: %s · Generated Pacific: %s</div>\n' \
+              "$CONTRACT" "$GENERATED_UTC" "$GENERATED_PT"
+            printf '%s\n' '  <pre id="mnq-data">'
+            jq . /tmp/mnq-morning.json | \
+              sed 's/&/\&amp;/g; s/</\&lt;/g; s/>/\&gt;/g'
+            printf '%s\n' '  </pre>'
+            printf '%s\n' '</body>'
+            printf '%s\n' '</html>'
+          } > mnq/index.html
+
       - name: Commit mirrored market data
         run: |
           git config user.name "mnq-mirror-bot"
           git config user.email "actions@users.noreply.github.com"
 
-          git add public/mnq-morning.json
+          git add public/mnq-morning.json mnq/index.html
 
           if git diff --cached --quiet; then
             echo "No market-data changes to commit."
