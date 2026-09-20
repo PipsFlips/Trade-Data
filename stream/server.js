@@ -14,6 +14,7 @@ const STATE_SAVE_MS = Number(process.env.STATE_SAVE_MS || 30000);
 const STATE_FILE = `${DATA_DIR}/trade-profile-state.json`;
 const ZONE = "America/Los_Angeles";
 const ALERT_SCORE_THRESHOLD = Number(process.env.ALERT_SCORE_THRESHOLD || 55);
+const REALTIME_RELAY_TOKEN = process.env.REALTIME_RELAY_TOKEN || "";
 const ALERT_SMS_TO = process.env.ALERT_SMS_TO || "";
 const TWILIO_ACCOUNT_SID = process.env.TWILIO_ACCOUNT_SID || "";
 const TWILIO_AUTH_TOKEN = process.env.TWILIO_AUTH_TOKEN || "";
@@ -45,6 +46,7 @@ let lastRawDepthEvent = null;
 let reconnectCount = 0;
 let subscriptionResults = {quotes:null,trades:null,depth:null};
 let lastSignalAlert = {key:null,at:0};
+let relayState = null;
 
 async function authenticate() {
   const r = await fetch(API_BASE + "/api/Auth/loginKey", {
@@ -641,7 +643,8 @@ function buildIndicatorPayload() {
   const currentRthState=profiles[profileKey("rth",today)];
   const globexExact=finalizeProfile(currentGlobexState);
   const rthExact=finalizeProfile(currentRthState);
-  const currentPrice=+(latestQuote?.lastPrice ?? latestQuote?.price ?? latestSnapshot.latest?.bar1m?.c ?? latestSnapshot.latest?.bar5m?.c);
+  const relayFreshNow=relayState && Date.now()-Date.parse(relayState.receivedAt)<10000;
+  const currentPrice=+(relayFreshNow ? relayState.currentPrice : (latestQuote?.lastPrice ?? latestQuote?.price ?? latestSnapshot.latest?.bar1m?.c ?? latestSnapshot.latest?.bar5m?.c));
   const p=a.profiles||{};
   const levels=uniqueLevels([
     {id:"pdh",label:"PDH",price:a.previousRTH?.high,kind:"resistance",priority:100},
@@ -667,11 +670,12 @@ function buildIndicatorPayload() {
     })))
   ],tick);
 
-  const f1=withCvd(flowArray(flowBars.oneMin,360));
-  const f5=withCvd(flowArray(flowBars.fiveMin,720));
+  const relayFresh=relayState && Date.now()-Date.parse(relayState.receivedAt)<10000;
+  const f1=relayFresh?(relayState.oneMin||[]):withCvd(flowArray(flowBars.oneMin,360));
+  const f5=relayFresh?(relayState.fiveMin||[]):withCvd(flowArray(flowBars.fiveMin,720));
   const last5=f5.at(-1)||null;
-  const globexVwap=exactVwapFromState(currentGlobexState) ?? a.vwap?.globex ?? null;
-  const rthVwap=exactVwapFromState(currentRthState);
+  const globexVwap=relayFresh && Number.isFinite(+relayState.sessionVwap)?+relayState.sessionVwap:(exactVwapFromState(currentGlobexState) ?? a.vwap?.globex ?? null);
+  const rthVwap=relayFresh && Number.isFinite(+relayState.rthVwap)?+relayState.rthVwap:exactVwapFromState(currentRthState);
 
   const candidateHighs=levels.filter(l=>["resistance","profile"].includes(l.kind)&&l.price>=currentPrice-tick*8).slice(0,5);
   const candidateLows=levels.filter(l=>["support","profile"].includes(l.kind)&&l.price<=currentPrice+tick*8).slice(0,5);
@@ -744,10 +748,10 @@ function buildIndicatorPayload() {
     flow:{
       oneMin:f1.slice(-240),
       fiveMin:f5.slice(-144),
-      currentGlobexDelta:globexExact?.delta??null,
-      currentRthDelta:rthExact?.delta??null,
-      currentGlobexCvd:globexExact?.cvd??null,
-      currentRthCvd:rthExact?.cvd??null
+      currentGlobexDelta:relayFresh?relayState.currentGlobexDelta:(globexExact?.delta??null),
+      currentRthDelta:relayFresh?relayState.currentRthDelta:(rthExact?.delta??null),
+      currentGlobexCvd:relayFresh?relayState.currentGlobexCvd:(globexExact?.cvd??null),
+      currentRthCvd:relayFresh?relayState.currentRthCvd:(rthExact?.cvd??null)
     },
     levels:levels.slice(0,18),
     trapCandidates:{buyer:candidateHighs,seller:candidateLows},
@@ -755,7 +759,7 @@ function buildIndicatorPayload() {
     orderBlocks,
     signal,
     volatility:{atr5m20:current5mAtr(latestSnapshot.bars?.fiveMinRecent||[],20),atr14Daily:latestSnapshot.analytics?.volatility?.ATR14Daily??null},
-    diagnostics:{tradeEventsReceived,tradeEventsMatched,quoteEventsReceived,depthEventsReceived,lastRawTradeEvent,lastRawQuoteEvent,lastRawDepthEvent,reconnectCount,subscriptionResults,alertScoreThreshold:ALERT_SCORE_THRESHOLD,smsConfigured:Boolean(ALERT_SMS_TO&&TWILIO_ACCOUNT_SID&&TWILIO_AUTH_TOKEN&&TWILIO_FROM_NUMBER)},
+    diagnostics:{tradeEventsReceived,tradeEventsMatched,quoteEventsReceived,depthEventsReceived,lastRawTradeEvent,lastRawQuoteEvent,lastRawDepthEvent,reconnectCount,subscriptionResults,relayFresh:Boolean(relayFresh),relayReceivedAt:relayState?.receivedAt||null,alertScoreThreshold:ALERT_SCORE_THRESHOLD,smsConfigured:Boolean(ALERT_SMS_TO&&TWILIO_ACCOUNT_SID&&TWILIO_AUTH_TOKEN&&TWILIO_FROM_NUMBER)},
     profiles:{currentGlobex:globexExact,currentRTH:rthExact},
     bars5m:(latestSnapshot.bars?.fiveMinRecent||[]).slice(-400)
   };
@@ -938,6 +942,17 @@ process.on("SIGTERM",()=>{ try{saveState(true);}finally{process.exit(0);} });
 process.on("SIGINT",()=>{ try{saveState(true);}finally{process.exit(0);} });
 
 const app=express();
+app.use(express.json({limit:"256kb"}));
+
+app.post("/realtime-relay",(req,res)=>{
+  if(!REALTIME_RELAY_TOKEN) return res.status(503).json({ok:false,error:"relay token not configured"});
+  const auth=req.headers.authorization||"";
+  if(auth!==("Bearer "+REALTIME_RELAY_TOKEN)) return res.status(401).json({ok:false,error:"unauthorized"});
+  const b=req.body||{};
+  if(!b.receivedAt || !Array.isArray(b.oneMin) || !Array.isArray(b.fiveMin)) return res.status(400).json({ok:false,error:"invalid payload"});
+  relayState=b;
+  res.json({ok:true,receivedAt:b.receivedAt});
+});
 
 app.get("/health",(req,res)=>res.json({
   ok:true,
