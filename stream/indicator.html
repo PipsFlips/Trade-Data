@@ -294,8 +294,14 @@ function drawChart(data){
     ctx.setLineDash([]);ctx.globalAlpha=1;
     const tag="OB "+ob.score;
     ctx.font="bold 9px -apple-system,BlinkMacSystemFont,Segoe UI,Arial";
-    ctx.textAlign="left";ctx.fillStyle=bullish?"#31c48d":"#f06565";
-    ctx.fillText(tag,Math.min(x1+4,left+cw*.30),Math.min(yy1,yy2)-5);
+    ctx.textAlign="left";
+    const tagX=Math.min(w-right-34,x1+4);
+    const tagY=Math.max(top+10,Math.min(yy1,yy2)+10);
+    const tw=ctx.measureText(tag).width+7;
+    ctx.fillStyle="rgba(13,19,26,.92)";
+    ctx.fillRect(tagX-3,tagY-8,tw,12);
+    ctx.fillStyle=bullish?"rgba(49,196,141,.98)":"rgba(240,101,101,.98)";
+    ctx.fillText(tag,tagX,tagY-2);
   }
 
   // Running VWAP curves. No on-chart labels.
@@ -309,7 +315,7 @@ function drawChart(data){
     for(let i=0;i<bars.length;i++){
       const point=series[firstVisible+i];
       const p=point?.v;
-      if(!Number.isFinite(+p)){
+      if(p===null || p===undefined || !Number.isFinite(Number(p))){
         if(started){ctx.stroke();started=false;}
         continue;
       }
