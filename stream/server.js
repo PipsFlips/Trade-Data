@@ -28,6 +28,7 @@ let lastTradeAt = null;
 let lastSnapshotAt = null;
 let latestSnapshot = null;
 let profiles = {};
+let flowBars = { oneMin:{}, fiveMin:{} };
 let stateDirty = false;
 
 async function authenticate() {
@@ -351,12 +352,34 @@ function applyTradeToState(state,d) {
   state.lastTradeAt=ts;
 }
 
+function bucketStartIso(ts,minutes) {
+  const ms=Date.parse(ts);
+  const bucketMs=minutes*60000;
+  return new Date(Math.floor(ms/bucketMs)*bucketMs).toISOString();
+}
+function updateFlowBucket(store,ts,d,minutes) {
+  const key=bucketStartIso(ts,minutes);
+  const price=+d.price, vol=+d.volume||0, type=+d.type;
+  if(!Number.isFinite(price)||!Number.isFinite(vol)||vol<=0) return;
+  let b=store[key];
+  if(!b) b=store[key]={t:key,o:price,h:price,l:price,c:price,volume:0,buyVolume:0,sellVolume:0,delta:0,trades:0};
+  b.h=Math.max(b.h,price); b.l=Math.min(b.l,price); b.c=price;
+  b.volume+=vol; b.trades++;
+  if(type===0){ b.buyVolume+=vol; b.delta+=vol; }
+  else if(type===1){ b.sellVolume+=vol; b.delta-=vol; }
+  store[key]=b;
+}
+function updateFlowBars(ts,d) {
+  updateFlowBucket(flowBars.oneMin,ts,d,1);
+  updateFlowBucket(flowBars.fiveMin,ts,d,5);
+}
 function addTrade(d) {
   const ts=d.timestamp||new Date().toISOString();
   for(const key of tradeSessionKeys(ts)){
     if(!profiles[key]) profiles[key]=emptyProfileState();
     applyTradeToState(profiles[key],d);
   }
+  updateFlowBars(ts,d);
   lastTradeAt=ts;
   stateDirty=true;
 }
@@ -430,12 +453,18 @@ function pruneProfiles() {
     const t=state?.lastTradeAt ? Date.parse(state.lastTradeAt) : 0;
     if(t && t<cutoff) delete profiles[key];
   }
+  const flowCutoff=Date.now()-4*86400000;
+  for(const store of [flowBars.oneMin,flowBars.fiveMin]){
+    for(const key of Object.keys(store)){
+      if(Date.parse(key)<flowCutoff) delete store[key];
+    }
+  }
 }
 function saveState(force=false) {
   if(!force&&!stateDirty) return;
   pruneProfiles();
   const tmp=STATE_FILE+".tmp";
-  fs.writeFileSync(tmp,JSON.stringify({schemaVersion:1,savedAt:new Date().toISOString(),profiles},null,2));
+  fs.writeFileSync(tmp,JSON.stringify({schemaVersion:2,savedAt:new Date().toISOString(),profiles,flowBars},null,2));
   fs.renameSync(tmp,STATE_FILE);
   stateDirty=false;
 }
@@ -444,9 +473,133 @@ function loadState() {
   try{
     const j=JSON.parse(fs.readFileSync(STATE_FILE,"utf8"));
     if(j?.profiles) profiles=j.profiles;
+    if(j?.flowBars) flowBars={oneMin:j.flowBars.oneMin||{},fiveMin:j.flowBars.fiveMin||{}};
   }catch(e){
     console.warn("Could not load profile state:",e.message);
   }
+}
+
+
+/* ---------- live indicator engine ---------- */
+
+function exactVwapFromState(state) {
+  if(!state) return null;
+  let num=0,den=0;
+  for(const x of Object.values(state.byPrice||{})){
+    const v=+x.volume||0,p=+x.price;
+    if(v>0&&Number.isFinite(p)){ num+=p*v; den+=v; }
+  }
+  return den?num/den:null;
+}
+function flowArray(store,minutesBack=720) {
+  const cutoff=Date.now()-minutesBack*60000;
+  return Object.values(store||{}).filter(b=>Date.parse(b.t)>=cutoff).sort((a,b)=>Date.parse(a.t)-Date.parse(b.t));
+}
+function withCvd(rows) {
+  let cvd=0;
+  return rows.map(b=>({...b,cvd:(cvd+=+b.delta||0)}));
+}
+function uniqueLevels(levels,tick=0.25) {
+  const seen=new Set(),out=[];
+  for(const l of levels){
+    if(!Number.isFinite(+l.price)) continue;
+    const k=Math.round(+l.price/tick);
+    if(seen.has(k)) continue;
+    seen.add(k); out.push({...l,price:+l.price});
+  }
+  return out.sort((a,b)=>b.priority-a.priority);
+}
+function buildIndicatorPayload() {
+  if(!latestSnapshot||!contract) return {};
+  const a=latestSnapshot.analytics||{}, tick=+contract.tickSize||0.25;
+  const currentSession=currentTradingSessionDate();
+  const today=nowPT().toISODate();
+  const currentGlobexState=profiles[profileKey("globex",currentSession)];
+  const currentRthState=profiles[profileKey("rth",today)];
+  const globexExact=finalizeProfile(currentGlobexState);
+  const rthExact=finalizeProfile(currentRthState);
+  const currentPrice=+(latestQuote?.lastPrice ?? latestQuote?.price ?? latestSnapshot.latest?.bar1m?.c ?? latestSnapshot.latest?.bar5m?.c);
+  const p=a.profiles||{};
+  const levels=uniqueLevels([
+    {id:"pdh",label:"PDH",price:a.previousRTH?.high,kind:"resistance",priority:100},
+    {id:"pdl",label:"PDL",price:a.previousRTH?.low,kind:"support",priority:100},
+    {id:"pdc",label:"PDC",price:a.previousRTH?.close,kind:"reference",priority:65},
+    {id:"onh",label:"ON High",price:a.currentOvernight?.high,kind:"resistance",priority:98},
+    {id:"onl",label:"ON Low",price:a.currentOvernight?.low,kind:"support",priority:98},
+    {id:"asiaH",label:"Asia H",price:a.asia?.high,kind:"resistance",priority:80},
+    {id:"asiaL",label:"Asia L",price:a.asia?.low,kind:"support",priority:80},
+    {id:"londonH",label:"London H",price:a.london?.high,kind:"resistance",priority:82},
+    {id:"londonL",label:"London L",price:a.london?.low,kind:"support",priority:82},
+    {id:"prevVah",label:"Prev VAH",price:p.previousRTH_exact?.vah ?? p.previousRTH_estimated?.vah,kind:"profile",priority:88},
+    {id:"prevPoc",label:"Prev POC",price:p.previousRTH_exact?.poc ?? p.previousRTH_estimated?.poc,kind:"profile",priority:90},
+    {id:"prevVal",label:"Prev VAL",price:p.previousRTH_exact?.val ?? p.previousRTH_estimated?.val,kind:"profile",priority:88},
+    {id:"onVah",label:"ON VAH",price:globexExact?.vah ?? p.currentOvernight_estimated?.vah,kind:"profile",priority:84},
+    {id:"onPoc",label:"ON POC",price:globexExact?.poc ?? p.currentOvernight_estimated?.poc,kind:"profile",priority:86},
+    {id:"onVal",label:"ON VAL",price:globexExact?.val ?? p.currentOvernight_estimated?.val,kind:"profile",priority:84},
+    ...((a.oneHourPivots||[]).filter(x=>!x.sweptLater).slice(0,6).map((x,i)=>({
+      id:"pivot"+i,label:`1H ${x.type==="high"?"H":"L"} ${x.significanceScore}`,price:x.price,
+      kind:x.type==="high"?"resistance":"support",priority:70-i
+    })))
+  ],tick);
+
+  const f1=withCvd(flowArray(flowBars.oneMin,360));
+  const f5=withCvd(flowArray(flowBars.fiveMin,720));
+  const last5=f5.at(-1)||null;
+  const globexVwap=exactVwapFromState(currentGlobexState) ?? a.vwap?.globex ?? null;
+  const rthVwap=exactVwapFromState(currentRthState);
+
+  const candidateHighs=levels.filter(l=>["resistance","profile"].includes(l.kind)&&l.price>=currentPrice-tick*8).slice(0,5);
+  const candidateLows=levels.filter(l=>["support","profile"].includes(l.kind)&&l.price<=currentPrice+tick*8).slice(0,5);
+
+  const recent=f1.slice(-45);
+  const traps=[];
+  for(const l of levels.filter(x=>x.priority>=80)){
+    const sweptUp=recent.find(b=>b.h>=l.price+tick*2 && b.c<l.price && b.delta>0);
+    if(sweptUp) traps.push({side:"SELL",type:"buyer-trap",level:l.price,label:l.label,time:sweptUp.t,delta:sweptUp.delta});
+    const sweptDn=recent.find(b=>b.l<=l.price-tick*2 && b.c>l.price && b.delta<0);
+    if(sweptDn) traps.push({side:"BUY",type:"seller-trap",level:l.price,label:l.label,time:sweptDn.t,delta:sweptDn.delta});
+  }
+  traps.sort((x,y)=>Date.parse(y.time)-Date.parse(x.time));
+
+  let signal={side:"NEUTRAL",score:0,reasons:[]};
+  const latestTrap=traps[0];
+  if(latestTrap && Date.now()-Date.parse(latestTrap.time)<=20*60000){
+    signal.side=latestTrap.side; signal.score+=55;
+    signal.reasons.push(latestTrap.type+" at "+latestTrap.label);
+  }
+  if(last5){
+    if(last5.delta>0){ if(signal.side==="BUY") signal.score+=20; else if(signal.side==="NEUTRAL"){signal.side="BUY";signal.score=20;} signal.reasons.push("5m delta positive"); }
+    if(last5.delta<0){ if(signal.side==="SELL") signal.score+=20; else if(signal.side==="NEUTRAL"){signal.side="SELL";signal.score=20;} signal.reasons.push("5m delta negative"); }
+  }
+  if(Number.isFinite(currentPrice)&&Number.isFinite(rthVwap)){
+    if(currentPrice>rthVwap && signal.side==="BUY"){signal.score+=15;signal.reasons.push("above RTH VWAP");}
+    if(currentPrice<rthVwap && signal.side==="SELL"){signal.score+=15;signal.reasons.push("below RTH VWAP");}
+  }
+  if(signal.score<40) signal={side:"NEUTRAL",score:signal.score,reasons:signal.reasons};
+
+  return {
+    schemaVersion:"1.0",
+    generatedUtc:DateTime.utc().toISO(),
+    generatedPacific:nowPT().toISO(),
+    connected,
+    contract:{id:contract.id,name:contract.name,tickSize:contract.tickSize,tickValue:contract.tickValue},
+    currentPrice:Number.isFinite(currentPrice)?currentPrice:null,
+    vwap:{globex:globexVwap,rth:rthVwap},
+    flow:{
+      oneMin:f1.slice(-240),
+      fiveMin:f5.slice(-144),
+      currentGlobexDelta:globexExact?.delta??null,
+      currentRthDelta:rthExact?.delta??null,
+      currentGlobexCvd:globexExact?.cvd??null,
+      currentRthCvd:rthExact?.cvd??null
+    },
+    levels:levels.slice(0,18),
+    trapCandidates:{buyer:candidateHighs,seller:candidateLows},
+    confirmedTraps:traps.slice(0,8),
+    signal,
+    profiles:{currentGlobex:globexExact,currentRTH:rthExact},
+    bars5m:(latestSnapshot.bars?.fiveMinRecent||[]).slice(-180)
+  };
 }
 
 /* ---------- snapshot ---------- */
@@ -485,7 +638,7 @@ async function buildSnapshot() {
   const priorRthDate=priorBusinessDateStr();
 
   latestSnapshot={
-    schemaVersion:3.3,
+    schemaVersion:3.4,
     generatedUtc:DateTime.utc().toISO(),
     generatedPacific:nowPT().toISO(),
     source:"TopstepX / ProjectX CME market data",
@@ -609,11 +762,18 @@ app.get("/health",(req,res)=>res.json({
   ok:true,
   connected,
   contract:contract?.name||null,
-  version:"3.3",
+  version:"3.4",
   lastTradeAt,
   lastSnapshotAt,
   persistedProfileKeys:Object.keys(profiles).sort()
 }));
+
+app.get("/mnq-indicator.json",(req,res)=>res.json(buildIndicatorPayload()));
+
+app.get("/indicator",(req,res)=>{
+  try{ res.type("html").send(fs.readFileSync(__dirname+"/indicator.html","utf8")); }
+  catch(e){ res.status(500).type("text").send("Indicator UI unavailable"); }
+});
 
 app.get("/mnq-snapshot.json",(req,res)=>res.json(latestSnapshot||{}));
 
@@ -652,7 +812,7 @@ app.get("/mnq-morning.json",(req,res)=>{
   });
 });
 
-app.get("/",(req,res)=>res.type("text").send("MNQ unified market-data service v3.3\n"));
+app.get("/",(req,res)=>res.type("text").send("MNQ unified market-data service v3.4\n"));
 
 app.listen(PORT,()=>console.log(`HTTP on :${PORT}`));
 
