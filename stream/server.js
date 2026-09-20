@@ -748,6 +748,7 @@ function buildIndicatorPayload() {
     confirmedTraps:traps.slice(0,8),
     orderBlocks,
     signal,
+    volatility:{atr5m20:current5mAtr(latestSnapshot.bars?.fiveMinRecent||[],20),atr14Daily:latestSnapshot.analytics?.volatility?.ATR14Daily??null},
     diagnostics:{tradeEventsReceived,tradeEventsMatched,lastRawTradeEvent,alertScoreThreshold:ALERT_SCORE_THRESHOLD,smsConfigured:Boolean(ALERT_SMS_TO&&TWILIO_ACCOUNT_SID&&TWILIO_AUTH_TOKEN&&TWILIO_FROM_NUMBER)},
     profiles:{currentGlobex:globexExact,currentRTH:rthExact},
     bars5m:(latestSnapshot.bars?.fiveMinRecent||[]).slice(-400)
