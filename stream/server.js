@@ -37,7 +37,13 @@ let flowBars = { oneMin:{}, fiveMin:{} };
 let stateDirty = false;
 let tradeEventsReceived = 0;
 let tradeEventsMatched = 0;
+let quoteEventsReceived = 0;
+let depthEventsReceived = 0;
 let lastRawTradeEvent = null;
+let lastRawQuoteEvent = null;
+let lastRawDepthEvent = null;
+let reconnectCount = 0;
+let subscriptionResults = {quotes:null,trades:null,depth:null};
 let lastSignalAlert = {key:null,at:0};
 
 async function authenticate() {
@@ -749,7 +755,7 @@ function buildIndicatorPayload() {
     orderBlocks,
     signal,
     volatility:{atr5m20:current5mAtr(latestSnapshot.bars?.fiveMinRecent||[],20),atr14Daily:latestSnapshot.analytics?.volatility?.ATR14Daily??null},
-    diagnostics:{tradeEventsReceived,tradeEventsMatched,lastRawTradeEvent,alertScoreThreshold:ALERT_SCORE_THRESHOLD,smsConfigured:Boolean(ALERT_SMS_TO&&TWILIO_ACCOUNT_SID&&TWILIO_AUTH_TOKEN&&TWILIO_FROM_NUMBER)},
+    diagnostics:{tradeEventsReceived,tradeEventsMatched,quoteEventsReceived,depthEventsReceived,lastRawTradeEvent,lastRawQuoteEvent,lastRawDepthEvent,reconnectCount,subscriptionResults,alertScoreThreshold:ALERT_SCORE_THRESHOLD,smsConfigured:Boolean(ALERT_SMS_TO&&TWILIO_ACCOUNT_SID&&TWILIO_AUTH_TOKEN&&TWILIO_FROM_NUMBER)},
     profiles:{currentGlobex:globexExact,currentRTH:rthExact},
     bars5m:(latestSnapshot.bars?.fiveMinRecent||[]).slice(-400)
   };
@@ -876,7 +882,15 @@ async function connectStream() {
     .withAutomaticReconnect()
     .build();
 
-  conn.on("GatewayQuote",(id,d)=>{ if(id===contract.id) latestQuote=d; });
+  conn.on("GatewayQuote",(id,d)=>{
+    quoteEventsReceived++;
+    lastRawQuoteEvent={id,receivedAt:new Date().toISOString(),lastPrice:d?.lastPrice??d?.price??null,bid:d?.bestBid??d?.bid??null,ask:d?.bestAsk??d?.ask??null};
+    if(id===contract.id || id===contract.symbolId || d?.symbolId===contract.symbolId) latestQuote=d;
+  });
+  conn.on("GatewayDepth",(id,d)=>{
+    depthEventsReceived++;
+    lastRawDepthEvent={id,receivedAt:new Date().toISOString(),symbolId:d?.symbolId||null,type:d?.type??null,price:d?.price??null,volume:d?.volume??null};
+  });
   conn.on("GatewayTrade",(id,d)=>{
     tradeEventsReceived++;
     lastRawTradeEvent={id,receivedAt:new Date().toISOString(),symbolId:d?.symbolId||null,price:d?.price??null,volume:d?.volume??null,type:d?.type??null,timestamp:d?.timestamp??null};
@@ -885,14 +899,22 @@ async function connectStream() {
   });
 
   const subscribe=async()=>{
-    await conn.invoke("SubscribeContractQuotes",contract.id);
-    await conn.invoke("SubscribeContractTrades",contract.id);
-    console.log("Subscribed contract trades",contract.id,contract.symbolId);
-    try{ await conn.invoke("SubscribeContractMarketDepth",contract.id); }catch(e){}
+    try{
+      subscriptionResults.quotes=await conn.invoke("SubscribeContractQuotes",contract.id);
+      console.log("Subscribed contract quotes",contract.id,subscriptionResults.quotes);
+    }catch(e){subscriptionResults.quotes={error:e.message};console.error("quote subscribe",e.message);}
+    try{
+      subscriptionResults.trades=await conn.invoke("SubscribeContractTrades",contract.id);
+      console.log("Subscribed contract trades",contract.id,contract.symbolId,subscriptionResults.trades);
+    }catch(e){subscriptionResults.trades={error:e.message};console.error("trade subscribe",e.message);}
+    try{
+      subscriptionResults.depth=await conn.invoke("SubscribeContractMarketDepth",contract.id);
+      console.log("Subscribed contract depth",contract.id,subscriptionResults.depth);
+    }catch(e){subscriptionResults.depth={error:e.message};console.error("depth subscribe",e.message);}
   };
 
   conn.onreconnecting(()=>connected=false);
-  conn.onreconnected(async()=>{ connected=true; await subscribe(); });
+  conn.onreconnected(async()=>{ reconnectCount++; connected=true; await subscribe(); });
   conn.onclose(()=>connected=false);
 
   await conn.start();
@@ -925,7 +947,8 @@ app.get("/health",(req,res)=>res.json({
   lastTradeAt,
   lastSnapshotAt,
   persistedProfileKeys:Object.keys(profiles).sort(),
-  tradeEventsReceived,tradeEventsMatched,lastRawTradeEvent
+  tradeEventsReceived,tradeEventsMatched,quoteEventsReceived,depthEventsReceived,
+  lastRawTradeEvent,lastRawQuoteEvent,lastRawDepthEvent,reconnectCount,subscriptionResults
 }));
 
 app.get("/mnq-indicator.json",(req,res)=>res.json(buildIndicatorPayload()));
