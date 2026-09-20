@@ -13,6 +13,11 @@ const SNAPSHOT_INTERVAL_MS = Number(process.env.SNAPSHOT_INTERVAL_MS || 300000);
 const STATE_SAVE_MS = Number(process.env.STATE_SAVE_MS || 30000);
 const STATE_FILE = `${DATA_DIR}/trade-profile-state.json`;
 const ZONE = "America/Los_Angeles";
+const ALERT_SCORE_THRESHOLD = Number(process.env.ALERT_SCORE_THRESHOLD || 55);
+const ALERT_SMS_TO = process.env.ALERT_SMS_TO || "";
+const TWILIO_ACCOUNT_SID = process.env.TWILIO_ACCOUNT_SID || "";
+const TWILIO_AUTH_TOKEN = process.env.TWILIO_AUTH_TOKEN || "";
+const TWILIO_FROM_NUMBER = process.env.TWILIO_FROM_NUMBER || "";
 
 if (!USERNAME || !API_KEY) throw new Error("Missing TOPSTEP_USERNAME / TOPSTEP_API_KEY");
 
@@ -30,6 +35,10 @@ let latestSnapshot = null;
 let profiles = {};
 let flowBars = { oneMin:{}, fiveMin:{} };
 let stateDirty = false;
+let tradeEventsReceived = 0;
+let tradeEventsMatched = 0;
+let lastRawTradeEvent = null;
+let lastSignalAlert = {key:null,at:0};
 
 async function authenticate() {
   const r = await fetch(API_BASE + "/api/Auth/loginKey", {
@@ -305,6 +314,114 @@ function scoredPivots(hour,current,a14) {
   return raw.sort((a,b)=>b.significanceScore-a.significanceScore).slice(0,8);
 }
 
+
+function median(nums){
+  const a=nums.filter(Number.isFinite).sort((x,y)=>x-y);
+  if(!a.length) return null;
+  const m=Math.floor(a.length/2);
+  return a.length%2?a[m]:(a[m-1]+a[m])/2;
+}
+function trueRangeSeries(rows){
+  const out=[];
+  for(let i=1;i<rows.length;i++){
+    const b=rows[i],pc=+rows[i-1].c;
+    out.push(Math.max(+b.h-+b.l,Math.abs(+b.h-pc),Math.abs(+b.l-pc)));
+  }
+  return out;
+}
+function current5mAtr(rows,n=20){
+  const a=trueRangeSeries(rows.slice(-(n+1)));
+  return a.length? a.reduce((x,y)=>x+y,0)/a.length : null;
+}
+function nearestLevelDistance(levels,price,side){
+  const vals=levels.map(l=>+l.price).filter(Number.isFinite);
+  const xs=side==="BUY"?vals.filter(x=>x>price):vals.filter(x=>x<price);
+  if(!xs.length) return null;
+  return side==="BUY"?Math.min(...xs)-price:price-Math.max(...xs);
+}
+function detectOrderBlocks(five,levels,flow5,currentPrice,rthVwap,globexVwap){
+  const rows=five.slice(-240);
+  if(rows.length<12) return [];
+  const atr=current5mAtr(rows,20)||20;
+  const medBody=median(rows.slice(-40).map(b=>Math.abs(+b.c-+b.o)))||4;
+  const flowMap=new Map((flow5||[]).map(x=>[Date.parse(x.t),x]));
+  const blocks=[];
+  for(let i=4;i<rows.length-3;i++){
+    const origin=rows[i];
+    const next=rows.slice(i+1,Math.min(rows.length,i+4));
+    if(!next.length) continue;
+    const prior=rows.slice(Math.max(0,i-6),i);
+    const swingHigh=Math.max(...prior.map(b=>+b.h));
+    const swingLow=Math.min(...prior.map(b=>+b.l));
+    const impulseHigh=Math.max(...next.map(b=>+b.h));
+    const impulseLow=Math.min(...next.map(b=>+b.l));
+    const impulseClose=+next.at(-1).c;
+    const moveUp=impulseHigh-(+origin.h);
+    const moveDn=(+origin.l)-impulseLow;
+    const bullish=(+origin.c<+origin.o) && impulseClose>swingHigh+0.5 && moveUp>=1.25*atr;
+    const bearish=(+origin.c>+origin.o) && impulseClose<swingLow-0.5 && moveDn>=1.25*atr;
+    if(!bullish&&!bearish) continue;
+
+    const side=bullish?"BUY":"SELL";
+    const low=bullish?Math.min(+origin.o,+origin.l):Math.min(+origin.o,+origin.h);
+    const high=bullish?Math.max(+origin.o,+origin.l):Math.max(+origin.o,+origin.h);
+    const bodyQuality=Math.abs(+next[0].c-+next[0].o)>=1.25*medBody;
+    const post=rows.slice(i+1);
+    const invalid= bullish ? post.some(b=>+b.c<low) : post.some(b=>+b.c>high);
+    if(invalid) continue;
+    const touches=post.filter(b=>+b.h>=low && +b.l<=high).length;
+    const fresh=touches<=1;
+    const center=(low+high)/2;
+    const confl=levels.some(l=>Math.abs(+l.price-center)<=Math.max(5,atr*.15));
+    const vwap=Number.isFinite(+rthVwap)?+rthVwap:+globexVwap;
+    const vwapAligned=Number.isFinite(vwap)?(bullish?center<=vwap:center>=vwap):false;
+    const f=flowMap.get(Date.parse(next[0].t));
+    const deltaAligned=f?(bullish?+f.delta>0:+f.delta<0):false;
+    const risk=Math.max(8,atr*.25);
+    const targetDist=nearestLevelDistance(levels,center,side);
+    const room=Number.isFinite(targetDist)&&targetDist>=risk*1.5;
+    let score=25;
+    if(moveUp>=1.25*atr||moveDn>=1.25*atr) score+=15;
+    if(bodyQuality) score+=10;
+    if(fresh) score+=10;
+    if(confl) score+=10;
+    if(vwapAligned) score+=10;
+    if(deltaAligned) score+=10;
+    if(room) score+=10;
+    blocks.push({
+      side,time:origin.t,low:+low.toFixed(2),high:+high.toFixed(2),
+      score:Math.min(100,score),fresh,touches,confluence:confl,
+      deltaConfirmed:deltaAligned,vwapAligned,targetRoom:room,
+      invalidated:false
+    });
+  }
+  const unique=[];
+  for(const b of blocks.sort((a,b)=>b.score-a.score||Date.parse(b.time)-Date.parse(a.time))){
+    if(unique.some(x=>x.side===b.side && Math.abs(((x.low+x.high)/2)-((b.low+b.high)/2))<2)) continue;
+    unique.push(b);
+    if(unique.filter(x=>x.side==="BUY").length>=2 && unique.filter(x=>x.side==="SELL").length>=2) break;
+  }
+  return unique.slice(0,4);
+}
+async function sendSmsAlert(message){
+  if(!ALERT_SMS_TO||!TWILIO_ACCOUNT_SID||!TWILIO_AUTH_TOKEN||!TWILIO_FROM_NUMBER) return false;
+  const auth=Buffer.from(TWILIO_ACCOUNT_SID+":"+TWILIO_AUTH_TOKEN).toString("base64");
+  const body=new URLSearchParams({To:ALERT_SMS_TO,From:TWILIO_FROM_NUMBER,Body:message});
+  const r=await fetch("https://api.twilio.com/2010-04-01/Accounts/"+TWILIO_ACCOUNT_SID+"/Messages.json",{
+    method:"POST",headers:{"Authorization":"Basic "+auth,"Content-Type":"application/x-www-form-urlencoded"},body
+  });
+  if(!r.ok){console.error("sms alert",r.status,await r.text());return false;}
+  return true;
+}
+function maybeSendSignalAlert(signal,currentPrice){
+  if(!signal||signal.score<ALERT_SCORE_THRESHOLD||signal.side==="NEUTRAL") return;
+  const key=signal.side+":"+Math.floor(signal.score/5);
+  if(lastSignalAlert.key===key && Date.now()-lastSignalAlert.at<30*60000) return;
+  lastSignalAlert={key,at:Date.now()};
+  const msg=`MNQ ${signal.side} score ${signal.score}/100 at ${Number(currentPrice).toFixed(2)}. ${(signal.reasons||[]).slice(0,3).join(" | ")}`;
+  sendSmsAlert(msg).catch(e=>console.error("sms alert",e.message));
+}
+
 /* ---------- realtime exact profiles ---------- */
 
 function emptyProfileState() {
@@ -563,24 +680,55 @@ function buildIndicatorPayload() {
   }
   traps.sort((x,y)=>Date.parse(y.time)-Date.parse(x.time));
 
-  let signal={side:"NEUTRAL",score:0,reasons:[]};
+  let signal={side:"NEUTRAL",score:0,reasons:[],components:{}};
   const latestTrap=traps[0];
   if(latestTrap && Date.now()-Date.parse(latestTrap.time)<=20*60000){
-    signal.side=latestTrap.side; signal.score+=55;
+    signal.side=latestTrap.side;
+    signal.score+=25; signal.components.trap=25;
     signal.reasons.push(latestTrap.type+" at "+latestTrap.label);
+
+    const last1=f1.at(-1)||null;
+    const last5=f5.at(-1)||null;
+    const latest5=(latestSnapshot.bars?.fiveMinRecent||[]).at(-1);
+    const structureOk=latest5 ? (signal.side==="BUY"?+latest5.c>+latestTrap.level:+latest5.c<+latestTrap.level) : false;
+    if(structureOk){signal.score+=20;signal.components.structure=20;signal.reasons.push("5m structure confirmed");}
+
+    if(last1 && (signal.side==="BUY"?+last1.delta>0:+last1.delta<0)){
+      signal.score+=10;signal.components.delta1m=10;signal.reasons.push("1m delta aligned");
+    }
+    if(last5 && (signal.side==="BUY"?+last5.delta>0:+last5.delta<0)){
+      signal.score+=10;signal.components.delta5m=10;signal.reasons.push("5m delta aligned");
+    }
+    const sessionCvd=globexExact?.cvd;
+    if(Number.isFinite(+sessionCvd) && (signal.side==="BUY"?+sessionCvd>0:+sessionCvd<0)){
+      signal.score+=10;signal.components.cvd=10;signal.reasons.push("session CVD aligned");
+    }
+    const activeVwap=Number.isFinite(+rthVwap)?+rthVwap:+globexVwap;
+    if(Number.isFinite(activeVwap) && (signal.side==="BUY"?currentPrice>activeVwap:currentPrice<activeVwap)){
+      signal.score+=10;signal.components.vwap=10;signal.reasons.push("VWAP aligned");
+    }
+    const trapLevel=levels.find(l=>l.label===latestTrap.label);
+    if(trapLevel && trapLevel.priority>=80){
+      signal.score+=10;signal.components.level=10;signal.reasons.push("major level confluence");
+    }
+    const atr5=current5mAtr(latestSnapshot.bars?.fiveMinRecent||[],20)||20;
+    const estRisk=Math.max(8,atr5*.25);
+    const targetDist=nearestLevelDistance(levels,currentPrice,signal.side);
+    if(Number.isFinite(targetDist)&&targetDist>=estRisk*1.5){
+      signal.score+=5;signal.components.targetRoom=5;signal.reasons.push(">=1.5R target room");
+    }
   }
-  if(last5){
-    if(last5.delta>0){ if(signal.side==="BUY") signal.score+=20; else if(signal.side==="NEUTRAL"){signal.side="BUY";signal.score=20;} signal.reasons.push("5m delta positive"); }
-    if(last5.delta<0){ if(signal.side==="SELL") signal.score+=20; else if(signal.side==="NEUTRAL"){signal.side="SELL";signal.score=20;} signal.reasons.push("5m delta negative"); }
-  }
-  if(Number.isFinite(currentPrice)&&Number.isFinite(rthVwap)){
-    if(currentPrice>rthVwap && signal.side==="BUY"){signal.score+=15;signal.reasons.push("above RTH VWAP");}
-    if(currentPrice<rthVwap && signal.side==="SELL"){signal.score+=15;signal.reasons.push("below RTH VWAP");}
-  }
-  if(signal.score<40) signal={side:"NEUTRAL",score:signal.score,reasons:signal.reasons};
+  signal.score=Math.min(100,signal.score);
+  if(signal.score<50) signal.side="NEUTRAL";
+
+  const orderBlocks=detectOrderBlocks(
+    latestSnapshot.bars?.fiveMinRecent||[],
+    levels,f5,currentPrice,rthVwap,globexVwap
+  );
+  maybeSendSignalAlert(signal,currentPrice);
 
   return {
-    schemaVersion:"1.2",
+    schemaVersion:"1.3",
     generatedUtc:DateTime.utc().toISO(),
     generatedPacific:nowPT().toISO(),
     connected,
@@ -598,7 +746,9 @@ function buildIndicatorPayload() {
     levels:levels.slice(0,18),
     trapCandidates:{buyer:candidateHighs,seller:candidateLows},
     confirmedTraps:traps.slice(0,8),
+    orderBlocks,
     signal,
+    diagnostics:{tradeEventsReceived,tradeEventsMatched,lastRawTradeEvent,alertScoreThreshold:ALERT_SCORE_THRESHOLD,smsConfigured:Boolean(ALERT_SMS_TO&&TWILIO_ACCOUNT_SID&&TWILIO_AUTH_TOKEN&&TWILIO_FROM_NUMBER)},
     profiles:{currentGlobex:globexExact,currentRTH:rthExact},
     bars5m:(latestSnapshot.bars?.fiveMinRecent||[]).slice(-400)
   };
@@ -726,11 +876,17 @@ async function connectStream() {
     .build();
 
   conn.on("GatewayQuote",(id,d)=>{ if(id===contract.id) latestQuote=d; });
-  conn.on("GatewayTrade",(id,d)=>{ if(id===contract.id) addTrade(d); });
+  conn.on("GatewayTrade",(id,d)=>{
+    tradeEventsReceived++;
+    lastRawTradeEvent={id,receivedAt:new Date().toISOString(),symbolId:d?.symbolId||null,price:d?.price??null,volume:d?.volume??null,type:d?.type??null,timestamp:d?.timestamp??null};
+    const match=id===contract.id || id===contract.symbolId || d?.symbolId===contract.symbolId;
+    if(match){ tradeEventsMatched++; addTrade(d); }
+  });
 
   const subscribe=async()=>{
     await conn.invoke("SubscribeContractQuotes",contract.id);
     await conn.invoke("SubscribeContractTrades",contract.id);
+    console.log("Subscribed contract trades",contract.id,contract.symbolId);
     try{ await conn.invoke("SubscribeContractMarketDepth",contract.id); }catch(e){}
   };
 
@@ -767,7 +923,8 @@ app.get("/health",(req,res)=>res.json({
   version:"3.4",
   lastTradeAt,
   lastSnapshotAt,
-  persistedProfileKeys:Object.keys(profiles).sort()
+  persistedProfileKeys:Object.keys(profiles).sort(),
+  tradeEventsReceived,tradeEventsMatched,lastRawTradeEvent
 }));
 
 app.get("/mnq-indicator.json",(req,res)=>res.json(buildIndicatorPayload()));
