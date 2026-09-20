@@ -87,6 +87,8 @@ canvas{display:block;width:100%;height:410px;border-radius:8px;background:#0d131
       <span><i style="display:inline-block;width:12px;border-top:1px dotted #f2c94c;vertical-align:middle;margin-right:4px"></i>Asia 17:00</span>
       <span><i style="display:inline-block;width:12px;border-top:1px dotted #57a4ff;vertical-align:middle;margin-right:4px"></i>London 00:00</span>
       <span><i style="display:inline-block;width:12px;border-top:1px dotted #ffffff;vertical-align:middle;margin-right:4px"></i>NY 06:30</span>
+      <span><i style="display:inline-block;width:12px;height:7px;background:rgba(49,196,141,.12);border:1px solid rgba(49,196,141,.5);vertical-align:middle;margin-right:4px"></i>Bull OB</span>
+      <span><i style="display:inline-block;width:12px;height:7px;background:rgba(240,101,101,.12);border:1px solid rgba(240,101,101,.5);vertical-align:middle;margin-right:4px"></i>Bear OB</span>
     </div>
     <canvas id="chart"></canvas>
   </div>
@@ -268,6 +270,26 @@ function drawChart(data){
     ctx.fillText(tag,left+cw*.20,Math.min(y1,y2)-5);
   }
 
+  // Active 5m order blocks. Only nearest/highest-scoring blocks are returned by the server.
+  for(const ob of (data.orderBlocks||[])){
+    const lo=+ob.low,hi=+ob.high;
+    if(hi<min||lo>max) continue;
+    const idx=Math.max(0,bars.findIndex(b=>Date.parse(b.t)>=Date.parse(ob.time)));
+    const x1=idx>=0?Math.max(left,x(idx)-bw):left;
+    const yy1=y(hi),yy2=y(lo);
+    const bullish=ob.side==="BUY";
+    const fill=bullish?"rgba(49,196,141,.09)":"rgba(240,101,101,.09)";
+    const edge=bullish?"rgba(49,196,141,.55)":"rgba(240,101,101,.55)";
+    ctx.fillStyle=fill;ctx.fillRect(x1,Math.min(yy1,yy2),(w-right)-x1,Math.abs(yy2-yy1));
+    ctx.strokeStyle=edge;ctx.globalAlpha=.8;ctx.setLineDash([4,4]);
+    ctx.strokeRect(x1,Math.min(yy1,yy2),(w-right)-x1,Math.abs(yy2-yy1));
+    ctx.setLineDash([]);ctx.globalAlpha=1;
+    const tag="OB "+ob.score;
+    ctx.font="bold 9px -apple-system,BlinkMacSystemFont,Segoe UI,Arial";
+    ctx.textAlign="left";ctx.fillStyle=bullish?"#31c48d":"#f06565";
+    ctx.fillText(tag,Math.min(x1+4,left+cw*.30),Math.min(yy1,yy2)-5);
+  }
+
   // Running VWAP curves. No on-chart labels.
   // White = full 15:00-14:00 session VWAP. Yellow = NY 06:30-13:00 only.
   const sessionSeries=vwapSeries(allBars,"session");
@@ -372,7 +394,7 @@ async function refresh(){
     document.getElementById("cvd").className="v "+(+cvd>0?"buy":+cvd<0?"sell":"");
     const sig=d.signal?.side||"NEUTRAL", se=document.getElementById("signal");
     se.textContent=sig;se.className="s "+(sig==="BUY"?"buy":sig==="SELL"?"sell":"neutral");
-    document.getElementById("score").textContent=(d.signal?.score||0)+" score";
+    document.getElementById("score").textContent=(d.signal?.score||0)+"/100";
     document.getElementById("reason").textContent=(d.signal?.reasons||[]).join(" • ")||"No confirmed trap signal yet.";
     nearestLevels(d);trapRows(d);drawChart(d);
     status.textContent=(d.connected?"Live feed connected":"Feed reconnecting")+" · auto refresh 5s";
