@@ -1,0 +1,12 @@
+{
+  "name": "mnq-topstep-stream",
+  "version": "2.1.0",
+  "private": true,
+  "scripts": {
+    "start": "node server.js"
+  },
+  "dependencies": {
+    "@microsoft/signalr": "^8.0.7",
+    "express": "^4.21.2"
+  }
+}
