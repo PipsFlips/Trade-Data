@@ -1,332 +1,148 @@
 #!/usr/bin/env python3
-"""
-MNQ TopstepX/ProjectX market-data publisher.
-
-Security design:
-- Reads TOPSTEP_USERNAME and TOPSTEP_API_KEY only from environment variables.
-- Calls authentication + market-data endpoints only.
-- Does NOT call account, position, order, cancel, or trade endpoints.
-- Writes only market data / derived analytics to public/mnq_latest.json.
-
-Intended execution:
-- GitHub Actions at 05:20 America/Los_Angeles, weekdays.
-- Two UTC cron entries are used to survive DST changes; this script guards
-  scheduled runs so only the invocation occurring during the 05:00 PT hour runs.
-"""
-
-import json
-import os
-import sys
+import json, os, statistics, sys
+from collections import defaultdict
 from datetime import datetime, timedelta, timezone, time
 from pathlib import Path
 from urllib import request, error
 from zoneinfo import ZoneInfo
 
-API_BASE = os.getenv("TOPSTEP_API_BASE", "https://api.topstepx.com").rstrip("/")
-USERNAME = os.getenv("TOPSTEP_USERNAME")
-API_KEY = os.getenv("TOPSTEP_API_KEY")
-LIVE = os.getenv("TOPSTEP_LIVE_DATA", "true").lower() in {"1", "true", "yes", "y"}
+API=os.getenv('TOPSTEP_API_BASE','https://api.topstepx.com').rstrip('/')
+USER=os.getenv('TOPSTEP_USERNAME'); KEY=os.getenv('TOPSTEP_API_KEY')
+LIVE=os.getenv('TOPSTEP_LIVE_DATA','false').lower() in {'1','true','yes'}
+LA=ZoneInfo('America/Los_Angeles'); UTC=timezone.utc
+OUT=Path('public/mnq_latest.json'); OUT.parent.mkdir(parents=True,exist_ok=True)
+GLOBEX=time(15,0); RTH_OPEN=time(6,30); RTH_CLOSE=time(13,0); BREAK=time(14,0)
+ASIA_START=time(17,0); ASIA_END=time(0,0); LONDON_START=time(0,0); LONDON_END=time(5,20)
 
-LA = ZoneInfo("America/Los_Angeles")
-UTC = timezone.utc
-
-OUT = Path("public/mnq_latest.json")
-OUT.parent.mkdir(parents=True, exist_ok=True)
-
-
-def now_utc():
-    return datetime.now(UTC)
-
-
-def iso_z(dt):
-    return dt.astimezone(UTC).isoformat().replace("+00:00", "Z")
-
-
+def now(): return datetime.now(UTC)
+def iso(dt): return dt.astimezone(UTC).isoformat().replace('+00:00','Z')
+def pdt(s):
+    s=str(s); s=s[:-1]+'+00:00' if s.endswith('Z') else s
+    d=datetime.fromisoformat(s); return (d if d.tzinfo else d.replace(tzinfo=UTC)).astimezone(UTC)
+def ldt(b): return pdt(b['t']).astimezone(LA)
 def should_run():
-    # workflow_dispatch can force a run regardless of clock.
-    if os.getenv("GITHUB_EVENT_NAME") == "workflow_dispatch":
-        return True
-    local = datetime.now(LA)
-    # Scheduled workflow runs twice in UTC to remain DST-safe.
-    return local.weekday() < 5 and local.hour == 5
+    if os.getenv('GITHUB_EVENT_NAME')=='workflow_dispatch': return True
+    x=datetime.now(LA); return x.weekday()<5 and x.hour==5
 
-
-def post_json(path, payload, token=None):
-    data = json.dumps(payload).encode("utf-8")
-    headers = {
-        "Accept": "text/plain",
-        "Content-Type": "application/json",
-        "User-Agent": "MNQ-Premarket-Collector/1.0",
-    }
-    if token:
-        headers["Authorization"] = f"Bearer {token}"
-
-    req = request.Request(API_BASE + path, data=data, headers=headers, method="POST")
+def post(path,payload,token=None):
+    h={'Accept':'text/plain','Content-Type':'application/json','User-Agent':'MNQ-Premarket/2'}
+    if token: h['Authorization']='Bearer '+token
+    q=request.Request(API+path,data=json.dumps(payload).encode(),headers=h,method='POST')
     try:
-        with request.urlopen(req, timeout=30) as resp:
-            raw = resp.read().decode("utf-8")
-            return json.loads(raw)
-    except error.HTTPError as e:
-        body = e.read().decode("utf-8", errors="replace")
-        raise RuntimeError(f"{path}: HTTP {e.code}: {body}") from e
-    except error.URLError as e:
-        raise RuntimeError(f"{path}: network error: {e}") from e
+        with request.urlopen(q,timeout=45) as r: return json.loads(r.read().decode())
+    except error.HTTPError as e: raise RuntimeError(f'{path} HTTP {e.code}: {e.read().decode(errors="replace")}')
 
+def auth():
+    if not USER or not KEY: raise RuntimeError('Missing GitHub secrets')
+    r=post('/api/Auth/loginKey',{'userName':USER,'apiKey':KEY})
+    if not r.get('success') or not r.get('token'): raise RuntimeError(f'Auth failed: {r.get("errorMessage")}')
+    return r['token']
 
-def authenticate():
-    if not USERNAME or not API_KEY:
-        raise RuntimeError("Missing TOPSTEP_USERNAME or TOPSTEP_API_KEY GitHub secret.")
-    r = post_json("/api/Auth/loginKey", {"userName": USERNAME, "apiKey": API_KEY})
-    token = r.get("token")
-    if not r.get("success") or not token:
-        raise RuntimeError(
-            f"Topstep authentication failed. "
-            f"errorCode={r.get('errorCode')} errorMessage={r.get('errorMessage')}"
-        )
-    return token
+def contract(token):
+    r=post('/api/Contract/search',{'searchText':'MNQ','live':LIVE},token)
+    cs=[c for c in (r.get('contracts') or []) if 'MNQ' in json.dumps(c).upper()]
+    cs=[c for c in cs if c.get('activeContract')] or cs
+    if not cs: raise RuntimeError('No MNQ contract returned')
+    return cs[0]
 
+def bars(token,cid,unit,num,days,limit):
+    r=post('/api/History/retrieveBars',{'contractId':cid,'live':LIVE,'startTime':iso(now()-timedelta(days=days)),'endTime':iso(now()),'unit':unit,'unitNumber':num,'limit':limit,'includePartialBar':True},token)
+    a=[{'t':b.get('t'),'o':b.get('o'),'h':b.get('h'),'l':b.get('l'),'c':b.get('c'),'v':b.get('v')} for b in (r.get('bars') or [])]
+    a.sort(key=lambda b:pdt(b['t']))
+    return a
 
-def looks_like_mnq(c):
-    fields = " ".join(
-        str(c.get(k, "")) for k in ("name", "description", "symbolId")
-    ).upper()
-    return (
-        "MNQ" in fields
-        or "MICRO E-MINI NASDAQ-100" in fields
-        or "MICRO E-MINI NASDAQ 100" in fields
-    )
+def between(a,s,e): return [b for b in a if s<=ldt(b)<e]
+def summary(a):
+    if not a:return None
+    return {'open':float(a[0]['o']),'high':max(float(x['h']) for x in a),'low':min(float(x['l']) for x in a),'close':float(a[-1]['c']),'volume':sum(float(x.get('v') or 0) for x in a),'start':a[0]['t'],'end':a[-1]['t'],'bars':len(a)}
+def previous_rth(a,ref):
+    d=ref-timedelta(days=1)
+    for _ in range(7):
+        x=between(a,datetime.combine(d,RTH_OPEN,tzinfo=LA),datetime.combine(d,RTH_CLOSE,tzinfo=LA))
+        if x:
+            z=summary(x);z['date']=d.isoformat();return z
+        d-=timedelta(days=1)
+def previous_globex(a,ref):
+    d=ref-timedelta(days=1)
+    for _ in range(7):
+        x=between(a,datetime.combine(d-timedelta(days=1),GLOBEX,tzinfo=LA),datetime.combine(d,BREAK,tzinfo=LA))
+        if x:
+            z=summary(x);z['sessionDate']=d.isoformat();return z
+        d-=timedelta(days=1)
+def session(a,s,e): return summary(between(a,s,e))
+def prior_week(a,ref):
+    mon=ref-timedelta(days=ref.weekday()); a0=mon-timedelta(days=7); b0=mon-timedelta(days=1)
+    z=summary([x for x in a if a0<=ldt(x).date()<=b0])
+    if z:z.update({'startDate':a0.isoformat(),'endDate':b0.isoformat()})
+    return z
 
+def vwap(a):
+    den=0;num=0
+    for b in a:
+        v=float(b.get('v') or 0)
+        if v<=0: continue
+        tp=(float(b['h'])+float(b['l'])+float(b['c']))/3;num+=tp*v;den+=v
+    return num/den if den else None
 
-def get_active_mnq(token):
-    r = post_json("/api/Contract/search", {"searchText": "MNQ", "live": LIVE}, token)
-    contracts = [c for c in (r.get("contracts") or []) if looks_like_mnq(c)]
+def atr(daily,n=14):
+    if len(daily)<n+1:return None
+    tr=[]
+    for i in range(1,len(daily)):
+        p=float(daily[i-1]['c']);b=daily[i]
+        tr.append(max(float(b['h'])-float(b['l']),abs(float(b['h'])-p),abs(float(b['l'])-p)))
+    return sum(tr[-n:])/n
 
-    active = [c for c in contracts if c.get("activeContract") is True]
-    if active:
-        return active[0]
-    if contracts:
-        # Search results are generally ordered by relevance; keep a fallback.
-        return contracts[0]
+def profile(a,tick=.25,pct=.70):
+    if not a:return None
+    d=defaultdict(float)
+    for b in a:
+        lo=round(float(b['l'])/tick)*tick; hi=round(float(b['h'])/tick)*tick; vol=float(b.get('v') or 0)
+        n=max(1,int(round((hi-lo)/tick))+1); share=vol/n
+        for i in range(n): d[round(lo+i*tick,10)]+=share
+    if not d:return None
+    prices=sorted(d);poc=max(prices,key=lambda p:d[p]);target=sum(d.values())*pct
+    chosen={poc};cum=d[poc];i=prices.index(poc)-1;j=i+2
+    while cum<target and (i>=0 or j<len(prices)):
+        lv=d[prices[i]] if i>=0 else -1; rv=d[prices[j]] if j<len(prices) else -1
+        if rv>=lv and j<len(prices):p=prices[j];j+=1
+        else:p=prices[i];i-=1
+        if p not in chosen:chosen.add(p);cum+=d[p]
+    hv=[];lv=[]
+    for k in range(1,len(prices)-1):
+        p=prices[k];x=d[p]
+        if x>d[prices[k-1]] and x>=d[prices[k+1]]:hv.append((p,x))
+        if x<d[prices[k-1]] and x<=d[prices[k+1]]:lv.append((p,x))
+    return {'method':'estimated from 1m OHLCV; uniform volume across each bar range','isTrueTradeByTradeProfile':False,'valueAreaPercent':pct,'poc':poc,'vah':max(chosen),'val':min(chosen),'hvnCandidates':[{'price':p,'estimatedVolume':round(v,2)} for p,v in sorted(hv,key=lambda x:x[1],reverse=True)[:5]],'lvnCandidates':[{'price':p,'estimatedVolume':round(v,2)} for p,v in sorted(lv,key=lambda x:x[1])[:5]]}
 
-    r = post_json("/api/Contract/available", {"live": LIVE}, token)
-    contracts = [c for c in (r.get("contracts") or []) if looks_like_mnq(c)]
-    active = [c for c in contracts if c.get("activeContract") is True]
-    if active:
-        return active[0]
-    if contracts:
-        return contracts[0]
-
-    raise RuntimeError("No MNQ contract returned by TopstepX/ProjectX.")
-
-
-def get_bars(token, contract_id):
-    end = now_utc()
-    # Enough history for previous week + current week and session analysis.
-    start = end - timedelta(days=15)
-    payload = {
-        "contractId": contract_id,
-        "live": LIVE,
-        "startTime": iso_z(start),
-        "endTime": iso_z(end),
-        "unit": 2,              # Minute
-        "unitNumber": 5,        # 5-minute bars
-        "limit": 10000,
-        "includePartialBar": True,
-    }
-    r = post_json("/api/History/retrieveBars", payload, token)
-    bars = r.get("bars") or []
-    if not bars:
-        raise RuntimeError(
-            f"Topstep returned zero bars. errorCode={r.get('errorCode')} "
-            f"errorMessage={r.get('errorMessage')}"
-        )
-    return bars
-
-
-def parse_bar_time(bar):
-    # ProjectX bar timestamp is normally "t".
-    raw = bar.get("t") or bar.get("time") or bar.get("timestamp")
-    if not raw:
-        raise ValueError("Bar contains no timestamp field.")
-    if raw.endswith("Z"):
-        raw = raw[:-1] + "+00:00"
-    dt = datetime.fromisoformat(raw)
-    if dt.tzinfo is None:
-        dt = dt.replace(tzinfo=UTC)
-    return dt.astimezone(UTC)
-
-
-def normalize_bar(bar):
-    # Preserve original API fields while adding explicit aliases for easy consumers.
-    return {
-        "t": bar.get("t") or bar.get("time") or bar.get("timestamp"),
-        "o": bar.get("o", bar.get("open")),
-        "h": bar.get("h", bar.get("high")),
-        "l": bar.get("l", bar.get("low")),
-        "c": bar.get("c", bar.get("close")),
-        "v": bar.get("v", bar.get("volume")),
-    }
-
-
-def high_low(rows):
-    if not rows:
-        return None
-    highs = [float(b["h"]) for b in rows if b.get("h") is not None]
-    lows = [float(b["l"]) for b in rows if b.get("l") is not None]
-    if not highs or not lows:
-        return None
-    return {"high": max(highs), "low": min(lows)}
-
-
-def prior_calendar_day_levels(bars):
-    """
-    Simple PT calendar-day reference. The downstream memo can additionally
-    calculate exchange/session definitions from the raw bars.
-    """
-    local_now = datetime.now(LA)
-    today = local_now.date()
-    prior_dates = sorted({
-        parse_bar_time(b).astimezone(LA).date()
-        for b in bars
-        if parse_bar_time(b).astimezone(LA).date() < today
-    }, reverse=True)
-    if not prior_dates:
-        return None
-    d = prior_dates[0]
-    rows = [
-        normalize_bar(b) for b in bars
-        if parse_bar_time(b).astimezone(LA).date() == d
-    ]
-    x = high_low(rows)
-    if x:
-        x["date"] = d.isoformat()
-    return x
-
-
-def prior_week_levels(bars):
-    local_now = datetime.now(LA)
-    current_monday = local_now.date() - timedelta(days=local_now.weekday())
-    previous_monday = current_monday - timedelta(days=7)
-    previous_sunday = current_monday - timedelta(days=1)
-
-    rows = []
-    for b in bars:
-        d = parse_bar_time(b).astimezone(LA).date()
-        if previous_monday <= d <= previous_sunday:
-            rows.append(normalize_bar(b))
-    x = high_low(rows)
-    if x:
-        x["startDate"] = previous_monday.isoformat()
-        x["endDate"] = previous_sunday.isoformat()
-    return x
-
-
-def session_levels(bars, start_local, end_local, label_date):
-    """
-    PT-local window helper. Window may cross midnight.
-    label_date is the local date on which the session starts.
-    """
-    start_dt = datetime.combine(label_date, start_local, tzinfo=LA)
-    end_date = label_date if end_local > start_local else label_date + timedelta(days=1)
-    end_dt = datetime.combine(end_date, end_local, tzinfo=LA)
-
-    rows = []
-    for b in bars:
-        dt = parse_bar_time(b).astimezone(LA)
-        if start_dt <= dt < end_dt:
-            rows.append(normalize_bar(b))
-    x = high_low(rows)
-    if x:
-        x["start"] = start_dt.isoformat()
-        x["end"] = end_dt.isoformat()
-    return x
-
-
-def simple_volume_stats(bars):
-    vals = [float(b.get("v") or 0) for b in bars[-288:] if b.get("v") is not None]
-    if not vals:
-        return None
-    vals_sorted = sorted(vals)
-    n = len(vals_sorted)
-    median = vals_sorted[n // 2] if n % 2 else (vals_sorted[n//2-1] + vals_sorted[n//2]) / 2
-    return {
-        "barsSampled": len(vals),
-        "median5mVolume": median,
-        "max5mVolume": max(vals),
-    }
-
-
-def build_output(contract, bars):
-    normalized = [normalize_bar(b) for b in bars]
-    local_now = datetime.now(LA)
-    today = local_now.date()
-    yesterday = today - timedelta(days=1)
-
-    # These are defaults only. Raw bars are included so the memo can use
-    # a preferred session definition without recollecting data.
-    # Asia default: 17:00-00:00 PT from prior calendar date.
-    # London default: 00:00-05:20 PT on current date.
-    asia = session_levels(bars, time(17, 0), time(0, 0), yesterday)
-    london = session_levels(bars, time(0, 0), time(5, 20), today)
-
-    latest = normalized[-1]
-
-    return {
-        "schemaVersion": 1,
-        "generatedUtc": iso_z(now_utc()),
-        "generatedPacific": datetime.now(LA).isoformat(),
-        "source": "TopstepX / ProjectX CME market data",
-        "liveRequested": LIVE,
-        "security": {
-            "containsCredentials": False,
-            "containsAccountData": False,
-            "containsOrdersOrPositions": False,
-        },
-        "contract": {
-            "id": contract.get("id"),
-            "name": contract.get("name"),
-            "description": contract.get("description"),
-            "symbolId": contract.get("symbolId"),
-            "activeContract": contract.get("activeContract"),
-        },
-        "latestBar": latest,
-        "derived": {
-            "previousCalendarDayPT": prior_calendar_day_levels(bars),
-            "previousCalendarWeekPT": prior_week_levels(bars),
-            "asiaDefaultPT_1700_0000": asia,
-            "londonDefaultPT_0000_0520": london,
-            "recentVolume": simple_volume_stats(normalized),
-        },
-        "notes": [
-            "Raw 5-minute OHLCV bars are included for independent calculation.",
-            "Session definitions are configurable downstream; included Asia/London values are defaults.",
-            "No footprint/bid-ask attribution is inferred from OHLCV alone."
-        ],
-        "bars5m": normalized,
-    }
-
+def pivots(a,left=2,right=2):
+    out=[]
+    for i in range(left,len(a)-right):
+        h=float(a[i]['h']);l=float(a[i]['l'])
+        hi=all(h>float(a[j]['h']) for j in range(i-left,i)) and all(h>=float(a[j]['h']) for j in range(i+1,i+right+1))
+        lo=all(l<float(a[j]['l']) for j in range(i-left,i)) and all(l<=float(a[j]['l']) for j in range(i+1,i+right+1))
+        if not (hi or lo):continue
+        typ='high' if hi else 'low';price=h if hi else l;swept=False;closeThrough=None
+        for b in a[i+right+1:]:
+            if typ=='high': swept=swept or float(b['h'])>price; closeThrough=closeThrough or (b['t'] if float(b['c'])>price else None)
+            else: swept=swept or float(b['l'])<price; closeThrough=closeThrough or (b['t'] if float(b['c'])<price else None)
+        out.append({'type':typ,'price':price,'time':a[i]['t'],'sweptLater':swept,'liquidityStatus':'swept' if swept else 'untouched','closeThroughTime':closeThrough})
+    return out[-16:]
 
 def main():
-    if not should_run():
-        local = datetime.now(LA)
-        print(f"Skipping duplicate DST cron invocation. Pacific time is {local.isoformat()}")
-        return
-
-    token = authenticate()
-    contract = get_active_mnq(token)
-    bars = get_bars(token, contract["id"])
-    payload = build_output(contract, bars)
-
-    OUT.write_text(json.dumps(payload, indent=2), encoding="utf-8")
-    print(f"Wrote {OUT}")
-    print(f"Contract: {payload['contract']['name']} ({payload['contract']['id']})")
-    print(f"Bars: {len(payload['bars5m'])}")
-    print(f"Latest: {payload['latestBar']}")
-
-
-if __name__ == "__main__":
-    try:
-        main()
-    except Exception as exc:
-        print(f"ERROR: {exc}", file=sys.stderr)
-        sys.exit(1)
+    if not should_run(): print('Skipping duplicate DST cron'); return
+    t=auth();c=contract(t);cid=c['id'];ref=datetime.now(LA).date();tick=float(c.get('tickSize') or .25)
+    m1=bars(t,cid,2,1,8,12000);m5=bars(t,cid,2,5,30,10000);h1=bars(t,cid,3,1,120,5000);d1=bars(t,cid,4,1,450,1000);w1=bars(t,cid,5,1,1500,500)
+    if not m5:raise RuntimeError('No 5m bars')
+    prev=previous_rth(m5,ref);pg=previous_globex(m5,ref)
+    asia_s=datetime.combine(ref-timedelta(days=1),ASIA_START,tzinfo=LA);asia_e=datetime.combine(ref,ASIA_END,tzinfo=LA)
+    lon_s=datetime.combine(ref,LONDON_START,tzinfo=LA);lon_e=datetime.combine(ref,LONDON_END,tzinfo=LA)
+    glob_s=datetime.combine(ref-timedelta(days=1),GLOBEX,tzinfo=LA)
+    on=summary(between(m5,glob_s,datetime.now(LA)))
+    prev_prof=None
+    if prev:
+        pd=datetime.fromisoformat(prev['date']).date();prev_prof=profile(between(m1,datetime.combine(pd,RTH_OPEN,tzinfo=LA),datetime.combine(pd,RTH_CLOSE,tzinfo=LA)),tick)
+    out={'schemaVersion':2,'generatedUtc':iso(now()),'generatedPacific':datetime.now(LA).isoformat(),'source':'TopstepX / ProjectX CME market data','liveRequested':LIVE,'contract':{'id':c.get('id'),'name':c.get('name'),'description':c.get('description'),'symbolId':c.get('symbolId'),'tickSize':c.get('tickSize'),'tickValue':c.get('tickValue'),'activeContract':c.get('activeContract')},'latest':{'bar1m':m1[-1] if m1 else None,'bar5m':m5[-1],'bar1h':h1[-1] if h1 else None},'analytics':{'previousRTH':prev,'previousFullGlobexSession':pg,'previousWeek':prior_week(m5,ref),'asia':session(m5,asia_s,asia_e),'london':session(m5,lon_s,lon_e),'currentOvernight':on,'vwap':{'globexSession':vwap(between(m1,glob_s,datetime.now(LA)))},'profiles':{'previousRTH_estimated':prev_prof,'currentOvernight_estimated':profile(between(m1,glob_s,datetime.now(LA)),tick),'warning':'Estimated from 1m OHLCV. Exact VAP requires realtime GatewayTrade collection.'},'oneHourPivots':pivots(h1),'volatility':{'ATR14Daily':atr(d1),'dailyRange20':{'average':statistics.mean([float(x['h'])-float(x['l']) for x in d1[-20:]]) if len(d1)>=1 else None}}},'barCounts':{'1m':len(m1),'5m':len(m5),'1h':len(h1),'1d':len(d1),'1w':len(w1)},'bars':{'1mRecent':m1[-2500:],'5mRecent':m5[-2500:],'1hRecent':h1[-1000:],'1dRecent':d1[-400:],'1wRecent':w1[-200:]},'security':{'containsCredentials':False,'containsAccountData':False,'containsOrdersOrPositions':False},'capabilities':{'exactWithRealtimeCollector':['trade-by-trade VAP','POC/VAH/VAL','5m delta','CVD','aggressive buy/sell imbalance','absorption/exhaustion candidates','DOM stacking/pulling when entitlement supports depth']}}
+    OUT.write_text(json.dumps(out,indent=2));print('Wrote',OUT);print('Contract',c.get('name'));print('Latest 5m',m5[-1]);print('Counts',out['barCounts'])
+if __name__=='__main__':
+    try:main()
+    except Exception as e:print('ERROR:',e,file=sys.stderr);sys.exit(1)
