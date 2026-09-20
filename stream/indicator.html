@@ -120,7 +120,8 @@ const levelColor=l=>{
     prevPoc:"#9b3030",
     asiaH:"#f2c94c",asiaL:"#f2c94c",
     londonH:"#57a4ff",londonL:"#57a4ff",
-    pwh:"#ffffff",pwl:"#ffffff"
+    pwh:"#ffffff",pwl:"#ffffff",
+    onh:"#31c48d",onl:"#f06565"
   };
   return m[l.id]||colorForKind(l.kind);
 };
@@ -133,25 +134,25 @@ function ptParts(ts){
   return {date:o.year+"-"+o.month+"-"+o.day,hour:+o.hour,minute:+o.minute,mins:(+o.hour)*60+(+o.minute)};
 }
 function vwapSeries(allBars,mode){
-  let pv=0,vol=0,out=[],active=false;
-  for(const b of allBars){
-    const p=ptParts(b.t), mins=p.mins;
+  let pv=0,vol=0,out=[],active=false,lastDate=null;
+  for(const bar of allBars){
+    const p=ptParts(bar.t), mins=p.mins;
+    // Never carry NY VWAP across dates or across its 13:00->06:30 closed window.
+    if(lastDate!==null && p.date!==lastDate && mode==="ny"){active=false;pv=0;vol=0;}
+    lastDate=p.date;
+
     if(mode==="session"){
-      // CME trading session: reset 15:00 PT, plot through 14:00 PT.
-      if(mins===900){pv=0;vol=0;active=true;}
-      if(mins>=840 && mins<900) active=false;
+      if(mins===900){pv=0;vol=0;active=true;}       // 15:00 PT reset
+      if(mins>=840 && mins<900) active=false;       // 14:00-15:00 maintenance break
     }else{
-      // NY/RTH only: reset 06:30 PT and stop plotting at 13:00 PT.
-      if(mins===390){pv=0;vol=0;active=true;}
-      if(mins>=780 || mins<390) active=false;
+      if(mins===390){pv=0;vol=0;active=true;}       // 06:30 PT reset
+      if(mins>=780 || mins<390) active=false;       // hard stop outside 06:30-13:00
     }
-    if(active){
-      const v=+b.v||0,tp=(+b.h + +b.l + +b.c)/3;
-      if(v>0){pv+=tp*v;vol+=v;}
-      out.push({t:b.t,v:vol?pv/vol:null});
-    }else{
-      out.push({t:b.t,v:null});
-    }
+
+    if(!active){out.push({t:bar.t,v:null});continue;}
+    const v=+bar.v||0,tp=(+bar.h + +bar.l + +bar.c)/3;
+    if(v>0){pv+=tp*v;vol+=v;}
+    out.push({t:bar.t,v:vol?pv/vol:null});
   }
   return out;
 }
@@ -275,14 +276,18 @@ function drawChart(data){
   function drawVwap(series,col){
     ctx.strokeStyle=col;ctx.lineWidth=1.8;ctx.setLineDash([]);
     let started=false;
-    ctx.beginPath();
     for(let i=0;i<bars.length;i++){
-      const p=series[firstVisible+i]?.v;
-      if(!Number.isFinite(+p)){started=false;continue;}
+      const point=series[firstVisible+i];
+      const p=point?.v;
+      if(!Number.isFinite(+p)){
+        if(started){ctx.stroke();started=false;}
+        continue;
+      }
       const xx=x(i),py=y(+p);
-      if(!started){ctx.moveTo(xx,py);started=true;}else ctx.lineTo(xx,py);
+      if(!started){ctx.beginPath();ctx.moveTo(xx,py);started=true;}
+      else ctx.lineTo(xx,py);
     }
-    ctx.stroke();
+    if(started) ctx.stroke();
   }
   drawVwap(sessionSeries,"#ffffff");
   drawVwap(nySeries,"#f2c94c");
@@ -354,16 +359,16 @@ async function refresh(){
     document.getElementById("gvwap").textContent=fmt(d.vwap?.globex);
     document.getElementById("rvwap").textContent=fmt(d.vwap?.rth);
     const d1=d.flow?.oneMin?.at(-1)?.delta;
-    document.getElementById("delta1").textContent=(+d1>0?"+":"")+nfmt(d1);
+    document.getElementById("delta1").textContent=Number.isFinite(+d1)?((+d1>0?"+":"")+nfmt(d1)):"—";
     document.getElementById("delta1").className="v "+(+d1>0?"buy":+d1<0?"sell":"");
     const d5=d.flow?.fiveMin?.at(-1)?.delta;
-    document.getElementById("delta5").textContent=(+d5>0?"+":"")+nfmt(d5);
+    document.getElementById("delta5").textContent=Number.isFinite(+d5)?((+d5>0?"+":"")+nfmt(d5)):"—";
     document.getElementById("delta5").className="v "+(+d5>0?"buy":+d5<0?"sell":"");
     const sessionCvd=d.flow?.currentGlobexCvd;
-    document.getElementById("sessionCvd").textContent=(+sessionCvd>0?"+":"")+nfmt(sessionCvd);
+    document.getElementById("sessionCvd").textContent=Number.isFinite(+sessionCvd)?((+sessionCvd>0?"+":"")+nfmt(sessionCvd)):"—";
     document.getElementById("sessionCvd").className="v "+(+sessionCvd>0?"buy":+sessionCvd<0?"sell":"");
     const cvd=d.flow?.currentRthCvd;
-    document.getElementById("cvd").textContent=(+cvd>0?"+":"")+nfmt(cvd);
+    document.getElementById("cvd").textContent=Number.isFinite(+cvd)?((+cvd>0?"+":"")+nfmt(cvd)):"—";
     document.getElementById("cvd").className="v "+(+cvd>0?"buy":+cvd<0?"sell":"");
     const sig=d.signal?.side||"NEUTRAL", se=document.getElementById("signal");
     se.textContent=sig;se.className="s "+(sig==="BUY"?"buy":sig==="SELL"?"sell":"neutral");
