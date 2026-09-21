@@ -22,6 +22,7 @@ function bucketStartIso(ts,minutes){
   return new Date(Math.floor(ms/bm)*bm).toISOString();
 }
 const oneMin={},fiveMin={};
+let sessionProfile={},rthProfile={};
 let latestPrice=null,latestQuote=null;
 let sessionBuy=0,sessionSell=0,rthBuy=0,rthSell=0;
 let sessionPV=0,sessionVol=0,rthPV=0,rthVol=0;
@@ -32,8 +33,8 @@ function pt(ts){return DateTime.fromISO(ts,{setZone:true}).setZone(ZONE);}
 function currentSessionKey(d){return (d.hour>=15?d.plus({days:1}):d).toISODate();}
 function ensureSessions(ts){
   const d=pt(ts),sk=currentSessionKey(d),rd=d.toISODate();
-  if(sk!==sessionKey){sessionKey=sk;sessionBuy=sessionSell=sessionPV=sessionVol=0;}
-  if(rd!==rthDate){rthDate=rd;rthBuy=rthSell=rthPV=rthVol=0;}
+  if(sk!==sessionKey){sessionKey=sk;sessionBuy=sessionSell=sessionPV=sessionVol=0;sessionProfile={};}
+  if(rd!==rthDate){rthDate=rd;rthBuy=rthSell=rthPV=rthVol=0;rthProfile={};}
 }
 function updateBucket(store,ts,d,mins){
   const k=bucketStartIso(ts,mins),p=+d.price,v=+d.volume||0,t=+d.type;
@@ -43,6 +44,35 @@ function updateBucket(store,ts,d,mins){
   if(t===0){b.buyVolume+=v;b.delta+=v;} else if(t===1){b.sellVolume+=v;b.delta-=v;}
   store[k]=b;
 }
+function updateProfile(store,p,v,t){
+  const k=(Math.round(p*4)/4).toFixed(2);
+  const x=store[k]||{price:+k,volume:0,buyVolume:0,sellVolume:0,delta:0};
+  x.volume+=v;
+  if(t===0){x.buyVolume+=v;x.delta+=v;}
+  else if(t===1){x.sellVolume+=v;x.delta-=v;}
+  store[k]=x;
+}
+function finalizeProfile(store){
+  const arr=Object.values(store||{}).sort((a,b)=>a.price-b.price);
+  if(!arr.length) return null;
+  const total=arr.reduce((s,x)=>s+x.volume,0);
+  const poc=arr.reduce((a,b)=>b.volume>a.volume?b:a);
+  const idx=arr.indexOf(poc),selected=new Set([idx]);
+  let lo=idx-1,hi=idx+1,cum=poc.volume;
+  while(cum<total*.70&&(lo>=0||hi<arr.length)){
+    const lv=lo>=0?arr[lo].volume:-1,hv=hi<arr.length?arr[hi].volume:-1;
+    const i=(hv>=lv&&hi<arr.length)?hi++:lo--;
+    if(i>=0&&i<arr.length&&!selected.has(i)){selected.add(i);cum+=arr[i].volume;}
+  }
+  const ps=[...selected].map(i=>arr[i].price);
+  return {
+    method:"exact local GatewayTrade volume-at-price",
+    totalVolume:total,poc:poc.price,vah:Math.max(...ps),val:Math.min(...ps),
+    strongestVolumeNodes:[...arr].sort((a,b)=>b.volume-a.volume).slice(0,12),
+    strongestDeltaPrices:[...arr].sort((a,b)=>Math.abs(b.delta)-Math.abs(a.delta)).slice(0,12)
+  };
+}
+
 function addTrade(d){
   const ts=d.timestamp||new Date().toISOString(),p=+d.price,v=+d.volume||0,t=+d.type;
   if(!Number.isFinite(p)||v<=0)return;
@@ -50,9 +80,9 @@ function addTrade(d){
   latestPrice=p;lastTradeTs=ts;
   updateBucket(oneMin,ts,d,1);updateBucket(fiveMin,ts,d,5);
   if(t===0)sessionBuy+=v; else if(t===1)sessionSell+=v;
-  sessionPV+=p*v;sessionVol+=v;
+  sessionPV+=p*v;sessionVol+=v;updateProfile(sessionProfile,p,v,t);
   const x=pt(ts),m=x.hour*60+x.minute;
-  if(m>=390&&m<780){if(t===0)rthBuy+=v;else if(t===1)rthSell+=v;rthPV+=p*v;rthVol+=v;}
+  if(m>=390&&m<780){if(t===0)rthBuy+=v;else if(t===1)rthSell+=v;rthPV+=p*v;rthVol+=v;updateProfile(rthProfile,p,v,t);}
 }
 function arr(store,minutes){
   const cut=Date.now()-minutes*60000;
@@ -74,7 +104,11 @@ async function sendRelay(){
     currentGlobexCvd:sessionBuy-sessionSell,
     currentRthCvd:rthBuy-rthSell,
     sessionVwap:sessionVol?sessionPV/sessionVol:null,
-    rthVwap:rthVol?rthPV/rthVol:null
+    rthVwap:rthVol?rthPV/rthVol:null,
+    profiles:{
+      session:finalizeProfile(sessionProfile),
+      rth:finalizeProfile(rthProfile)
+    }
   };
   const r=await fetch(RELAY_URL,{method:"POST",headers:{"Content-Type":"application/json","Authorization":"Bearer "+RELAY_TOKEN},body:JSON.stringify(body)});
   if(!r.ok) throw new Error("relay "+r.status+" "+await r.text());
