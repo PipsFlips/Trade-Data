@@ -471,19 +471,26 @@ async function refresh(){
     const freshEl=document.getElementById("flowFresh");
     const freshText=document.getElementById("flowFreshText");
     const relayAt=d.diagnostics?.relayReceivedAt ? Date.parse(d.diagnostics.relayReceivedAt) : NaN;
+    const tradeAt=d.flow?.lastTradeAt ? Date.parse(d.flow.lastTradeAt) :
+      (d.diagnostics?.lastTradeAt ? Date.parse(d.diagnostics.lastTradeAt) : NaN);
     const relayAge=Number.isFinite(relayAt)?Math.max(0,Math.round((Date.now()-relayAt)/1000)):null;
-    if(relayAge!==null && relayAge<=10){
-      freshEl.className="flowFresh live";
-      freshText.textContent="ORDER FLOW LIVE • "+relayAge+"s ago";
-    }else if(relayAge!==null && relayAge<=30){
-      freshEl.className="flowFresh delay";
-      freshText.textContent="ORDER FLOW DELAYED • "+relayAge+"s ago";
-    }else if(relayAge!==null){
+    const tradeAge=Number.isFinite(tradeAt)?Math.max(0,Math.round((Date.now()-tradeAt)/1000)):null;
+
+    if(relayAge===null || relayAge>10){
       freshEl.className="flowFresh stale";
-      freshText.textContent="ORDER FLOW STALE • "+relayAge+"s ago";
+      freshText.textContent=relayAge===null?"RELAY OFFLINE":"RELAY OFFLINE • "+relayAge+"s";
+    }else if(tradeAge!==null && tradeAge<=5){
+      freshEl.className="flowFresh live";
+      freshText.textContent="ORDER FLOW LIVE • "+tradeAge+"s";
+    }else if(tradeAge!==null && tradeAge<=15){
+      freshEl.className="flowFresh delay";
+      freshText.textContent="ORDER FLOW QUIET • "+tradeAge+"s";
+    }else if(tradeAge!==null){
+      freshEl.className="flowFresh stale";
+      freshText.textContent="ORDER FLOW STALE • "+tradeAge+"s";
     }else{
       freshEl.className="flowFresh stale";
-      freshText.textContent="ORDER FLOW UNAVAILABLE";
+      freshText.textContent="ORDER FLOW NO TRADE DATA";
     }
     document.getElementById("gvwap").textContent=fmt(d.vwap?.globex);
     document.getElementById("rvwap").textContent=fmt(d.vwap?.rth);
