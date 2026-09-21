@@ -374,6 +374,15 @@ function aggregateBars(rows,minutes){
   }
   return out.sort((a,b)=>Date.parse(a.t)-Date.parse(b.t));
 }
+function deltaTrend15m(f5){
+  const bars=aggregateBars(f5||[],15).filter(b=>Date.parse(b.t)+15*60000<=Date.now()).slice(-4);
+  if(!bars.length) return {direction:"NEUTRAL",sum:0,bars:0};
+  const sum=bars.reduce((s,b)=>s+(+b.delta||0),0);
+  const pos=bars.filter(b=>+b.delta>0).length,neg=bars.filter(b=>+b.delta<0).length;
+  const direction=(sum>0&&pos>=2)?"BULLISH":(sum<0&&neg>=2)?"BEARISH":"NEUTRAL";
+  return {direction,sum,bars:bars.length,last:+bars.at(-1).delta||0};
+}
+
 function currentAtr(rows,n=20){
   const a=trueRangeSeries((rows||[]).slice(-(n+1)));
   return a.length?a.reduce((x,y)=>x+y,0)/a.length:null;
@@ -463,7 +472,7 @@ function currentOrb(five,f5){
   };
 }
 
-function buildMarketAnalysis({currentPrice,levels,f1,f5,signal,traps,orderBlocks,globexVwap,rthVwap,sessionCvd,atr5,orb,bars5m}){
+function buildMarketAnalysis({currentPrice,levels,f1,f5,signal,traps,orderBlocks,globexVwap,rthVwap,sessionCvd,atr5,orb,bars5m,delta15,profiles}){
   const closed1=lastClosedBar(f1||[],1);
   const closed5=lastClosedBar(f5||[],5);
   const closed5s=(f5||[]).filter(b=>Date.parse(b.t)+300000<=Date.now());
@@ -471,10 +480,16 @@ function buildMarketAnalysis({currentPrice,levels,f1,f5,signal,traps,orderBlocks
   const activeVwap=Number.isFinite(+rthVwap)?+rthVwap:+globexVwap;
   let biasPoints=0;
   const reasons=[];
+  const profile=profiles?.rth||profiles?.session||null;
 
   if(Number.isFinite(activeVwap)){
     if(currentPrice>activeVwap){biasPoints+=2;reasons.push("price above active VWAP");}
     else if(currentPrice<activeVwap){biasPoints-=2;reasons.push("price below active VWAP");}
+  }
+  if(profile){
+    if(Number.isFinite(+profile.vah)&&currentPrice>+profile.vah){biasPoints+=1;reasons.push("price above profile value");}
+    else if(Number.isFinite(+profile.val)&&currentPrice<+profile.val){biasPoints-=1;reasons.push("price below profile value");}
+    else if(Number.isFinite(+profile.poc)){reasons.push("profile POC "+(+profile.poc).toFixed(2));}
   }
   if(closed5&&prior5){
     if(+closed5.c>+prior5.c){biasPoints+=1;reasons.push("5m structure pushing higher");}
@@ -488,6 +503,8 @@ function buildMarketAnalysis({currentPrice,levels,f1,f5,signal,traps,orderBlocks
     if(+sessionCvd>0){biasPoints+=1;reasons.push("session CVD positive");}
     else if(+sessionCvd<0){biasPoints-=1;reasons.push("session CVD negative");}
   }
+  if(delta15?.direction==="BULLISH"){biasPoints+=2;reasons.push("15m delta trend positive");}
+  else if(delta15?.direction==="BEARISH"){biasPoints-=2;reasons.push("15m delta trend negative");}
   const newestTrap=(traps||[])[0];
   if(newestTrap && Date.now()-Date.parse(newestTrap.time)<=20*60000){
     if(newestTrap.side==="BUY"){biasPoints+=2;reasons.push("confirmed seller trap");}
@@ -850,9 +867,11 @@ function buildIndicatorPayload() {
   const today=nowPT().toISODate();
   const currentGlobexState=profiles[profileKey("globex",currentSession)];
   const currentRthState=profiles[profileKey("rth",today)];
-  const globexExact=finalizeProfile(currentGlobexState);
-  const rthExact=finalizeProfile(currentRthState);
   const relayFreshNow=relayState && Date.now()-Date.parse(relayState.receivedAt)<10000;
+  const relayGlobexProfile=relayFreshNow?relayState.profiles?.session:null;
+  const relayRthProfile=relayFreshNow?relayState.profiles?.rth:null;
+  const globexExact=relayGlobexProfile||finalizeProfile(currentGlobexState);
+  const rthExact=relayRthProfile||finalizeProfile(currentRthState);
   const currentPrice=+(relayFreshNow ? relayState.currentPrice : (latestQuote?.lastPrice ?? latestQuote?.price ?? latestSnapshot.latest?.bar1m?.c ?? latestSnapshot.latest?.bar5m?.c));
   const p=a.profiles||{};
   const levels=uniqueLevels([
@@ -1030,7 +1049,9 @@ function buildIndicatorPayload() {
   const analysis=buildMarketAnalysis({
     currentPrice,levels,f1,f5,signal,traps,orderBlocks,globexVwap,rthVwap,
     sessionCvd:relayFresh?relayState.currentGlobexCvd:(globexExact?.cvd??null),
-    atr5:current5mAtr(bars5m,20),orb,bars5m
+    atr5:current5mAtr(bars5m,20),orb,bars5m,
+    delta15:deltaTrend15m(f5),
+    profiles:{session:globexExact,rth:rthExact}
   });
   maybeSendSignalAlert(signal,currentPrice);
 
@@ -1064,6 +1085,17 @@ function buildIndicatorPayload() {
     volatility:{atr5m20:current5mAtr(latestSnapshot.bars?.fiveMinRecent||[],20),atr14Daily:latestSnapshot.analytics?.volatility?.ATR14Daily??null},
     diagnostics:{tradeEventsReceived,tradeEventsMatched,quoteEventsReceived,depthEventsReceived,lastRawTradeEvent,lastRawQuoteEvent,lastRawDepthEvent,reconnectCount,subscriptionResults,relayFresh:Boolean(relayFresh),relayReceivedAt:relayState?.receivedAt||null,lastTradeAt:relayState?.lastTradeAt||lastTradeAt||null,lastTradeReceivedAt:relayState?.lastTradeReceivedAt||null,lastQuoteReceivedAt:relayState?.lastQuoteReceivedAt||null,lastDepthReceivedAt:relayState?.lastDepthReceivedAt||null,alertScoreThreshold:ALERT_SCORE_THRESHOLD,smsConfigured:Boolean(ALERT_SMS_TO&&TWILIO_ACCOUNT_SID&&TWILIO_AUTH_TOKEN&&TWILIO_FROM_NUMBER)},
     profiles:{currentGlobex:globexExact,currentRTH:rthExact},
+    background:{
+      delta15:deltaTrend15m(f5),
+      volume:{
+        current5m:+((bars5m||[]).at(-1)?.v||0),
+        median5m:median((bars5m||[]).slice(-21,-1).map(b=>+b.v||0).filter(x=>x>0))
+      },
+      volumeProfile:{
+        currentGlobex:globexExact,
+        currentRTH:rthExact
+      }
+    },
     bars5m:(latestSnapshot.bars?.fiveMinRecent||[]).slice(-400)
   };
 }
