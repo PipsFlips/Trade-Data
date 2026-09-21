@@ -357,6 +357,39 @@ function nearestLevelDistance(levels,price,side){
   if(!xs.length) return null;
   return side==="BUY"?Math.min(...xs)-price:price-Math.max(...xs);
 }
+function mergeLiveFiveMinuteBars(historical,relayBars){
+  const map=new Map();
+  for(const b of historical||[]){
+    const t=Date.parse(b.t); if(!Number.isFinite(t)) continue;
+    const k=Math.floor(t/300000)*300000;
+    map.set(k,{...b,t:new Date(k).toISOString(),v:+b.v||0});
+  }
+  for(const r of relayBars||[]){
+    const t=Date.parse(r.t); if(!Number.isFinite(t)) continue;
+    const k=Math.floor(t/300000)*300000;
+    const base=map.get(k);
+    if(base){
+      map.set(k,{
+        ...base,
+        t:new Date(k).toISOString(),
+        o:Number.isFinite(+base.o)?+base.o:+r.o,
+        h:Math.max(Number.isFinite(+base.h)?+base.h:-Infinity,+r.h),
+        l:Math.min(Number.isFinite(+base.l)?+base.l:Infinity,+r.l),
+        c:+r.c,
+        // REST may already contain part of this bar, so do not add volumes and double-count.
+        v:Math.max(+base.v||0,+r.volume||0),
+        live:true
+      });
+    }else{
+      map.set(k,{
+        t:new Date(k).toISOString(),o:+r.o,h:+r.h,l:+r.l,c:+r.c,
+        v:+r.volume||0,live:true
+      });
+    }
+  }
+  return [...map.values()].sort((a,b)=>Date.parse(a.t)-Date.parse(b.t));
+}
+
 function aggregateBars(rows,minutes){
   const out=[], by=new Map(), ms=minutes*60000;
   for(const b of rows||[]){
@@ -901,6 +934,7 @@ function buildIndicatorPayload() {
   const relayFresh=relayState && Date.now()-Date.parse(relayState.receivedAt)<10000;
   const f1=relayFresh?(relayState.oneMin||[]):withCvd(flowArray(flowBars.oneMin,360));
   const f5=relayFresh?(relayState.fiveMin||[]):withCvd(flowArray(flowBars.fiveMin,720));
+  const liveBars5m=mergeLiveFiveMinuteBars(latestSnapshot.bars?.fiveMinRecent||[],f5);
   const last5=f5.at(-1)||null;
   const globexVwap=relayFresh && Number.isFinite(+relayState.sessionVwap)?+relayState.sessionVwap:(exactVwapFromState(currentGlobexState) ?? a.vwap?.globex ?? null);
   const rthVwap=relayFresh && Number.isFinite(+relayState.rthVwap)?+relayState.rthVwap:exactVwapFromState(currentRthState);
@@ -1039,7 +1073,7 @@ function buildIndicatorPayload() {
   signal.score=Math.min(100,signal.score);
   if(signal.score<50) signal.side="NEUTRAL";
 
-  const bars5m=latestSnapshot.bars?.fiveMinRecent||[];
+  const bars5m=liveBars5m;
   const bars15m=aggregateBars(bars5m,15);
   const flow15m=aggregateBars(f5,15);
   const orderBlocks=detectOrderBlocks(
@@ -1082,7 +1116,7 @@ function buildIndicatorPayload() {
     orb,
     signal,
     analysis,
-    volatility:{atr5m20:current5mAtr(latestSnapshot.bars?.fiveMinRecent||[],20),atr14Daily:latestSnapshot.analytics?.volatility?.ATR14Daily??null},
+    volatility:{atr5m20:current5mAtr(liveBars5m,20),atr14Daily:latestSnapshot.analytics?.volatility?.ATR14Daily??null},
     diagnostics:{tradeEventsReceived,tradeEventsMatched,quoteEventsReceived,depthEventsReceived,lastRawTradeEvent,lastRawQuoteEvent,lastRawDepthEvent,reconnectCount,subscriptionResults,relayFresh:Boolean(relayFresh),relayReceivedAt:relayState?.receivedAt||null,lastTradeAt:relayState?.lastTradeAt||lastTradeAt||null,lastTradeReceivedAt:relayState?.lastTradeReceivedAt||null,lastQuoteReceivedAt:relayState?.lastQuoteReceivedAt||null,lastDepthReceivedAt:relayState?.lastDepthReceivedAt||null,alertScoreThreshold:ALERT_SCORE_THRESHOLD,smsConfigured:Boolean(ALERT_SMS_TO&&TWILIO_ACCOUNT_SID&&TWILIO_AUTH_TOKEN&&TWILIO_FROM_NUMBER)},
     profiles:{currentGlobex:globexExact,currentRTH:rthExact},
     background:{
@@ -1096,7 +1130,7 @@ function buildIndicatorPayload() {
         currentRTH:rthExact
       }
     },
-    bars5m:(latestSnapshot.bars?.fiveMinRecent||[]).slice(-400)
+    bars5m:liveBars5m.slice(-400)
   };
 }
 
