@@ -1,5 +1,7 @@
 const signalR = require("@microsoft/signalr");
 const { DateTime } = require("luxon");
+const fs = require("fs");
+const path = require("path");
 
 const API_BASE = process.env.TOPSTEP_API_BASE || "https://api.topstepx.com";
 const HUB = process.env.TOPSTEP_MARKET_HUB || "https://rtc.topstepx.com/hubs/market";
@@ -9,9 +11,24 @@ const LIVE = String(process.env.TOPSTEP_LIVE_DATA || "false").toLowerCase()==="t
 const RELAY_URL = process.env.RELAY_URL || "https://trade-data-production.up.railway.app/realtime-relay";
 const RELAY_TOKEN = process.env.REALTIME_RELAY_TOKEN;
 const ZONE="America/Los_Angeles";
+const STATE_FILE=process.env.COLLECTOR_STATE_FILE||path.join(__dirname,"collector-state.json");
+const STATE_SAVE_MS=30000;
+const TOKEN_REFRESH_MS=18*60*60*1000;
 
 if(!USERNAME||!API_KEY||!RELAY_TOKEN){console.error("Set TOPSTEP_USERNAME, TOPSTEP_API_KEY, REALTIME_RELAY_TOKEN");process.exit(1);}
 
+let authToken=null,authIssuedAt=0;
+async function authenticate(){
+  const auth=await post("/api/Auth/loginKey",{userName:USERNAME,apiKey:API_KEY});
+  if(!auth.success||!auth.token) throw new Error("Auth failed");
+  authToken=auth.token;
+  authIssuedAt=Date.now();
+  return authToken;
+}
+async function getToken(){
+  if(!authToken||Date.now()-authIssuedAt>TOKEN_REFRESH_MS) await authenticate();
+  return authToken;
+}
 async function post(path,payload,token){
   const r=await fetch(API_BASE+path,{method:"POST",headers:{"Content-Type":"application/json","Accept":"text/plain",...(token?{"Authorization":"Bearer "+token}:{})},body:JSON.stringify(payload)});
   if(!r.ok) throw new Error(path+" "+r.status+" "+await r.text());
@@ -29,6 +46,46 @@ let sessionPV=0,sessionVol=0,rthPV=0,rthVol=0;
 let sessionKey=null,rthDate=null,lastTradeTs=null;
 let lastTradeReceivedAt=null,lastQuoteReceivedAt=null,lastDepthReceivedAt=null;
 let lastRecoveryAt=0;
+let collectorStartedAt=new Date().toISOString();
+let recoveryCount=0;
+function saveState(){
+  try{
+    const tmp=STATE_FILE+".tmp";
+    fs.writeFileSync(tmp,JSON.stringify({
+      savedAt:new Date().toISOString(),sessionKey,rthDate,
+      sessionBuy,sessionSell,rthBuy,rthSell,sessionPV,sessionVol,rthPV,rthVol,
+      sessionProfile,rthProfile,oneMin,fiveMin,lastTradeTs,latestPrice
+    }));
+    fs.renameSync(tmp,STATE_FILE);
+  }catch(e){console.error("STATE_SAVE_ERR",e.message);}
+}
+function loadState(){
+  try{
+    if(!fs.existsSync(STATE_FILE)) return;
+    const x=JSON.parse(fs.readFileSync(STATE_FILE,"utf8"));
+    const now=DateTime.now().setZone(ZONE);
+    const expectedSession=(now.hour>=15?now.plus({days:1}):now).toISODate();
+    const expectedRth=now.toISODate();
+
+    if(x.sessionKey===expectedSession){
+      sessionKey=x.sessionKey;
+      sessionBuy=+x.sessionBuy||0;sessionSell=+x.sessionSell||0;
+      sessionPV=+x.sessionPV||0;sessionVol=+x.sessionVol||0;
+      sessionProfile=x.sessionProfile||{};
+      Object.assign(oneMin,x.oneMin||{});
+      Object.assign(fiveMin,x.fiveMin||{});
+      lastTradeTs=x.lastTradeTs||null;
+      latestPrice=Number.isFinite(+x.latestPrice)?+x.latestPrice:null;
+    }
+    if(x.rthDate===expectedRth){
+      rthDate=x.rthDate;
+      rthBuy=+x.rthBuy||0;rthSell=+x.rthSell||0;
+      rthPV=+x.rthPV||0;rthVol=+x.rthVol||0;
+      rthProfile=x.rthProfile||{};
+    }
+    console.log("STATE_LOADED",{session:sessionKey,rth:rthDate,lastTrade:lastTradeTs});
+  }catch(e){console.error("STATE_LOAD_ERR",e.message);}
+}
 function pt(ts){return DateTime.fromISO(ts,{setZone:true}).setZone(ZONE);}
 function currentSessionKey(d){return (d.hour>=15?d.plus({days:1}):d).toISODate();}
 function ensureSessions(ts){
@@ -108,22 +165,26 @@ async function sendRelay(){
     profiles:{
       session:finalizeProfile(sessionProfile),
       rth:finalizeProfile(rthProfile)
+    },
+    collector:{
+      startedAt:collectorStartedAt,
+      recoveryCount
     }
   };
   const r=await fetch(RELAY_URL,{method:"POST",headers:{"Content-Type":"application/json","Authorization":"Bearer "+RELAY_TOKEN},body:JSON.stringify(body)});
   if(!r.ok) throw new Error("relay "+r.status+" "+await r.text());
 }
 (async()=>{
-  const auth=await post("/api/Auth/loginKey",{userName:USERNAME,apiKey:API_KEY});
-  if(!auth.success||!auth.token) throw new Error("Auth failed");
-  const found=await post("/api/Contract/search",{searchText:"MNQ",live:LIVE},auth.token);
+  loadState();
+  await authenticate();
+  const found=await post("/api/Contract/search",{searchText:"MNQ",live:LIVE},authToken);
   const c=(found.contracts||[]).find(x=>x.activeContract)||found.contracts?.[0];
   if(!c) throw new Error("MNQ not found");
   console.log("CONTRACT",c.id,c.name,c.symbolId,"live="+LIVE);
 
   let q=0,t=0,d=0;
   const conn=new signalR.HubConnectionBuilder()
-    .withUrl(HUB,{skipNegotiation:true,transport:signalR.HttpTransportType.WebSockets,accessTokenFactory:()=>auth.token})
+    .withUrl(HUB,{skipNegotiation:true,transport:signalR.HttpTransportType.WebSockets,accessTokenFactory:async()=>await getToken()})
     .withAutomaticReconnect()
     .build();
 
@@ -147,6 +208,16 @@ async function sendRelay(){
     lastDepthReceivedAt=new Date().toISOString();
   });
 
+  conn.onreconnected(async()=>{
+    recoveryCount++;
+    console.log("AUTO_RECONNECTED",conn.connectionId);
+    try{
+      await conn.invoke("SubscribeContractQuotes",c.id);
+      await conn.invoke("SubscribeContractTrades",c.id);
+      try{await conn.invoke("SubscribeContractMarketDepth",c.id);}catch{}
+    }catch(e){console.error("AUTO_RESUB_ERR",e.message);}
+  });
+
   await conn.start();
   console.log("CONNECTED",conn.connectionId);
   console.log("QUOTE_SUB",await conn.invoke("SubscribeContractQuotes",c.id));
@@ -156,6 +227,7 @@ async function sendRelay(){
   async function recoverRealtime(reason){
     if(Date.now()-lastRecoveryAt<30000) return;
     lastRecoveryAt=Date.now();
+    recoveryCount++;
     console.log("WATCHDOG_RECOVERY",reason,new Date().toISOString());
     try{
       if(conn.state===signalR.HubConnectionState.Connected){
@@ -172,6 +244,7 @@ async function sendRelay(){
       if(conn.state!==signalR.HubConnectionState.Disconnected) await conn.stop();
     }catch{}
     try{
+      await getToken();
       await conn.start();
       console.log("WATCHDOG_RECONNECTED",conn.connectionId);
       console.log("WATCHDOG_QUOTE_SUB",await conn.invoke("SubscribeContractQuotes",c.id));
@@ -195,5 +268,8 @@ async function sendRelay(){
   },5000);
 
   setInterval(()=>sendRelay().catch(e=>console.error("RELAY_ERR",e.message)),2000);
-  setInterval(()=>console.log("COUNTS",{quotes:q,trades:t,depth:d,price:latestPrice,sessionCvd:sessionBuy-sessionSell,rthCvd:rthBuy-rthSell,tradeAgeSec:lastTradeReceivedAt?Math.round((Date.now()-Date.parse(lastTradeReceivedAt))/1000):null}),10000);
+  setInterval(saveState,STATE_SAVE_MS);
+  setInterval(()=>console.log("COUNTS",{quotes:q,trades:t,depth:d,price:latestPrice,sessionCvd:sessionBuy-sessionSell,rthCvd:rthBuy-rthSell,tradeAgeSec:lastTradeReceivedAt?Math.round((Date.now()-Date.parse(lastTradeReceivedAt))/1000):null,recoveries:recoveryCount}),60000);
+  process.on("SIGTERM",()=>{saveState();process.exit(0);});
+  process.on("SIGINT",()=>{saveState();process.exit(0);});
 })().catch(e=>{console.error(e);process.exit(1);});
