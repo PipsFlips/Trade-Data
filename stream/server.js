@@ -15,6 +15,7 @@ const STATE_FILE = `${DATA_DIR}/trade-profile-state.json`;
 const ZONE = "America/Los_Angeles";
 const ALERT_SCORE_THRESHOLD = Number(process.env.ALERT_SCORE_THRESHOLD || 55);
 const REALTIME_RELAY_TOKEN = process.env.REALTIME_RELAY_TOKEN || "";
+const DIRECT_TOPSTEP_REALTIME = String(process.env.DIRECT_TOPSTEP_REALTIME || "false").toLowerCase()==="true";
 const ALERT_SMS_TO = process.env.ALERT_SMS_TO || "";
 const TWILIO_ACCOUNT_SID = process.env.TWILIO_ACCOUNT_SID || "";
 const TWILIO_AUTH_TOKEN = process.env.TWILIO_AUTH_TOKEN || "";
@@ -1028,7 +1029,14 @@ async function init() {
   await authenticate();
   await findContract();
   await buildSnapshot();
-  await connectStream();
+
+  if(DIRECT_TOPSTEP_REALTIME){
+    await connectStream();
+    console.log("Direct Topstep realtime enabled");
+  } else {
+    connected=false;
+    console.log("Direct Topstep realtime disabled; using Mac relay for realtime");
+  }
 
   setInterval(()=>buildSnapshot().catch(e=>console.error("snapshot",e)),SNAPSHOT_INTERVAL_MS);
   setInterval(()=>saveState(false),STATE_SAVE_MS);
@@ -1059,6 +1067,7 @@ app.get("/health",(req,res)=>res.json({
   lastTradeAt,
   lastSnapshotAt,
   persistedProfileKeys:Object.keys(profiles).sort(),
+  directTopstepRealtime:DIRECT_TOPSTEP_REALTIME,
   tradeEventsReceived,tradeEventsMatched,quoteEventsReceived,depthEventsReceived,
   lastRawTradeEvent,lastRawQuoteEvent,lastRawDepthEvent,reconnectCount,subscriptionResults
 }));
