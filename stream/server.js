@@ -47,6 +47,7 @@ let reconnectCount = 0;
 let subscriptionResults = {quotes:null,trades:null,depth:null};
 let lastSignalAlert = {key:null,at:0};
 let relayState = null;
+let signalStability = {setupKey:null,cvdAlignedSince:null,targetRoomAward:null};
 
 async function authenticate() {
   const r = await fetch(API_BASE + "/api/Auth/loginKey", {
@@ -340,6 +341,14 @@ function trueRangeSeries(rows){
 function current5mAtr(rows,n=20){
   const a=trueRangeSeries(rows.slice(-(n+1)));
   return a.length? a.reduce((x,y)=>x+y,0)/a.length : null;
+}
+function lastClosedBar(rows,minutes){
+  const now=Date.now();
+  for(let i=rows.length-1;i>=0;i--){
+    const t=Date.parse(rows[i].t);
+    if(Number.isFinite(t) && t + minutes*60000 <= now) return rows[i];
+  }
+  return null;
 }
 function nearestLevelDistance(levels,price,side){
   const vals=levels.map(l=>+l.price).filter(Number.isFinite);
@@ -694,39 +703,61 @@ function buildIndicatorPayload() {
   const latestTrap=traps[0];
   if(latestTrap && Date.now()-Date.parse(latestTrap.time)<=20*60000){
     signal.side=latestTrap.side;
+    const setupKey=[latestTrap.side,latestTrap.type,latestTrap.label,latestTrap.time].join("|");
+    if(signalStability.setupKey!==setupKey){
+      signalStability={setupKey,cvdAlignedSince:null,targetRoomAward:null};
+    }
+
     signal.score+=25; signal.components.trap=25;
     signal.reasons.push(latestTrap.type+" at "+latestTrap.label);
 
-    const last1=f1.at(-1)||null;
-    const last5=f5.at(-1)||null;
-    const latest5=(latestSnapshot.bars?.fiveMinRecent||[]).at(-1);
-    const structureOk=latest5 ? (signal.side==="BUY"?+latest5.c>+latestTrap.level:+latest5.c<+latestTrap.level) : false;
-    if(structureOk){signal.score+=20;signal.components.structure=20;signal.reasons.push("5m structure confirmed");}
+    const last1=lastClosedBar(f1,1);
+    const last5=lastClosedBar(f5,5);
+    const closed5=lastClosedBar(latestSnapshot.bars?.fiveMinRecent||[],5);
+    const structureOk=closed5 ? (signal.side==="BUY"?+closed5.c>+latestTrap.level:+closed5.c<+latestTrap.level) : false;
+    if(structureOk){
+      signal.score+=20;signal.components.structure=20;signal.reasons.push("closed 5m structure confirmed");
+    }
 
     if(last1 && (signal.side==="BUY"?+last1.delta>0:+last1.delta<0)){
-      signal.score+=10;signal.components.delta1m=10;signal.reasons.push("1m delta aligned");
+      signal.score+=10;signal.components.delta1m=10;signal.reasons.push("closed 1m delta aligned");
     }
     if(last5 && (signal.side==="BUY"?+last5.delta>0:+last5.delta<0)){
-      signal.score+=10;signal.components.delta5m=10;signal.reasons.push("5m delta aligned");
+      signal.score+=10;signal.components.delta5m=10;signal.reasons.push("closed 5m delta aligned");
     }
-    const sessionCvd=globexExact?.cvd;
-    if(Number.isFinite(+sessionCvd) && (signal.side==="BUY"?+sessionCvd>0:+sessionCvd<0)){
-      signal.score+=10;signal.components.cvd=10;signal.reasons.push("session CVD aligned");
+
+    const sessionCvd=relayFresh?relayState.currentGlobexCvd:(globexExact?.cvd);
+    const cvdAligned=Number.isFinite(+sessionCvd) && (signal.side==="BUY"?+sessionCvd>0:+sessionCvd<0);
+    if(cvdAligned){
+      if(!signalStability.cvdAlignedSince) signalStability.cvdAlignedSince=Date.now();
+      if(Date.now()-signalStability.cvdAlignedSince>=10000){
+        signal.score+=10;signal.components.cvd=10;signal.reasons.push("session CVD aligned 10s");
+      }
+    }else{
+      signalStability.cvdAlignedSince=null;
     }
+
     const activeVwap=Number.isFinite(+rthVwap)?+rthVwap:+globexVwap;
     if(Number.isFinite(activeVwap) && (signal.side==="BUY"?currentPrice>activeVwap:currentPrice<activeVwap)){
       signal.score+=10;signal.components.vwap=10;signal.reasons.push("VWAP aligned");
     }
+
     const trapLevel=levels.find(l=>l.label===latestTrap.label);
     if(trapLevel && trapLevel.priority>=80){
       signal.score+=10;signal.components.level=10;signal.reasons.push("major level confluence");
     }
-    const atr5=current5mAtr(latestSnapshot.bars?.fiveMinRecent||[],20)||20;
-    const estRisk=Math.max(8,atr5*.25);
-    const targetDist=nearestLevelDistance(levels,currentPrice,signal.side);
-    if(Number.isFinite(targetDist)&&targetDist>=estRisk*1.5){
+
+    if(signalStability.targetRoomAward===null){
+      const atr5=current5mAtr(latestSnapshot.bars?.fiveMinRecent||[],20)||20;
+      const estRisk=Math.max(8,atr5*.25);
+      const targetDist=nearestLevelDistance(levels,currentPrice,signal.side);
+      signalStability.targetRoomAward=Boolean(Number.isFinite(targetDist)&&targetDist>=estRisk*1.5);
+    }
+    if(signalStability.targetRoomAward){
       signal.score+=5;signal.components.targetRoom=5;signal.reasons.push(">=1.5R target room");
     }
+  }else{
+    signalStability={setupKey:null,cvdAlignedSince:null,targetRoomAward:null};
   }
   signal.score=Math.min(100,signal.score);
   if(signal.score<50) signal.side="NEUTRAL";
