@@ -15,6 +15,11 @@ body{padding:env(safe-area-inset-top) env(safe-area-inset-right) calc(14px + env
 .brand{font-size:12px;letter-spacing:.12em;text-transform:uppercase;color:var(--muted)}
 .price{font-size:28px;font-weight:750;line-height:1.05;margin-top:3px}
 .sub{font-size:12px;color:var(--muted);margin-top:4px}
+.flowFresh{display:inline-flex;align-items:center;gap:6px;margin-top:6px;padding:4px 7px;border:1px solid var(--line);border-radius:999px;font-size:10px;font-weight:800;letter-spacing:.04em;background:var(--panel)}
+.flowFresh.live{color:var(--green);border-color:rgba(49,196,141,.45)}
+.flowFresh.delay{color:var(--amber);border-color:rgba(242,184,75,.45)}
+.flowFresh.stale{color:var(--red);border-color:rgba(240,101,101,.45)}
+.flowFresh .fdot{width:6px;height:6px;border-radius:50%;background:currentColor;box-shadow:0 0 7px currentColor}
 .signal{min-width:105px;text-align:center;border:1px solid var(--line);background:var(--panel);padding:9px 10px;border-radius:12px}
 .signal .s{font-weight:800;font-size:18px}
 .signal .score{font-size:11px;color:var(--muted);margin-top:2px}
@@ -55,6 +60,7 @@ canvas{display:block;width:100%;height:410px;border-radius:8px;background:#0d131
       <div class="brand">PipsFlips • MNQ Live</div>
       <div class="price" id="price">—</div>
       <div class="sub"><span id="contract">MNQ</span> · <span id="stamp">waiting for data</span></div>
+      <div class="flowFresh stale" id="flowFresh"><span class="fdot"></span><span id="flowFreshText">ORDER FLOW WAITING</span></div>
     </div>
     <div class="signal">
       <div class="s neutral" id="signal">NEUTRAL</div>
@@ -395,6 +401,23 @@ async function refresh(){
     document.getElementById("price").textContent=fmt(d.currentPrice);
     document.getElementById("contract").textContent=d.contract?.name||"MNQ";
     document.getElementById("stamp").textContent=new Date(d.generatedUtc).toLocaleTimeString([], {hour:"numeric",minute:"2-digit",second:"2-digit"});
+    const freshEl=document.getElementById("flowFresh");
+    const freshText=document.getElementById("flowFreshText");
+    const relayAt=d.diagnostics?.relayReceivedAt ? Date.parse(d.diagnostics.relayReceivedAt) : NaN;
+    const relayAge=Number.isFinite(relayAt)?Math.max(0,Math.round((Date.now()-relayAt)/1000)):null;
+    if(relayAge!==null && relayAge<=10){
+      freshEl.className="flowFresh live";
+      freshText.textContent="ORDER FLOW LIVE • "+relayAge+"s ago";
+    }else if(relayAge!==null && relayAge<=30){
+      freshEl.className="flowFresh delay";
+      freshText.textContent="ORDER FLOW DELAYED • "+relayAge+"s ago";
+    }else if(relayAge!==null){
+      freshEl.className="flowFresh stale";
+      freshText.textContent="ORDER FLOW STALE • "+relayAge+"s ago";
+    }else{
+      freshEl.className="flowFresh stale";
+      freshText.textContent="ORDER FLOW UNAVAILABLE";
+    }
     document.getElementById("gvwap").textContent=fmt(d.vwap?.globex);
     document.getElementById("rvwap").textContent=fmt(d.vwap?.rth);
     const d1=d.flow?.oneMin?.at(-1)?.delta;
