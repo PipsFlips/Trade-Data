@@ -26,6 +26,8 @@ let latestPrice=null,latestQuote=null;
 let sessionBuy=0,sessionSell=0,rthBuy=0,rthSell=0;
 let sessionPV=0,sessionVol=0,rthPV=0,rthVol=0;
 let sessionKey=null,rthDate=null,lastTradeTs=null;
+let lastTradeReceivedAt=null,lastQuoteReceivedAt=null,lastDepthReceivedAt=null;
+let lastRecoveryAt=0;
 function pt(ts){return DateTime.fromISO(ts,{setZone:true}).setZone(ZONE);}
 function currentSessionKey(d){return (d.hour>=15?d.plus({days:1}):d).toISODate();}
 function ensureSessions(ts){
@@ -60,6 +62,9 @@ async function sendRelay(){
   const body={
     receivedAt:new Date().toISOString(),
     lastTradeAt:lastTradeTs,
+    lastTradeReceivedAt,
+    lastQuoteReceivedAt,
+    lastDepthReceivedAt,
     currentPrice:latestPrice,
     quote:latestQuote,
     oneMin:arr(oneMin,360),
@@ -91,6 +96,7 @@ async function sendRelay(){
   conn.on("GatewayQuote",(id,x)=>{
     const rows=Array.isArray(x)?x:[x];
     q+=rows.length;
+    lastQuoteReceivedAt=new Date().toISOString();
     for(const row of rows){
       latestQuote=row;
       if(Number.isFinite(+(row?.lastPrice??row?.price))) latestPrice=+(row.lastPrice??row.price);
@@ -99,9 +105,13 @@ async function sendRelay(){
   conn.on("GatewayTrade",(id,x)=>{
     const rows=Array.isArray(x)?x:[x];
     t+=rows.length;
+    lastTradeReceivedAt=new Date().toISOString();
     for(const row of rows) addTrade(row);
   });
-  conn.on("GatewayDepth",(id,x)=>{d+=Array.isArray(x)?x.length:1;});
+  conn.on("GatewayDepth",(id,x)=>{
+    d+=Array.isArray(x)?x.length:1;
+    lastDepthReceivedAt=new Date().toISOString();
+  });
 
   await conn.start();
   console.log("CONNECTED",conn.connectionId);
@@ -109,6 +119,47 @@ async function sendRelay(){
   console.log("TRADE_SUB",await conn.invoke("SubscribeContractTrades",c.id));
   try{console.log("DEPTH_SUB",await conn.invoke("SubscribeContractMarketDepth",c.id));}catch(e){console.log("DEPTH_SUB_ERR",e.message);}
 
+  async function recoverRealtime(reason){
+    if(Date.now()-lastRecoveryAt<30000) return;
+    lastRecoveryAt=Date.now();
+    console.log("WATCHDOG_RECOVERY",reason,new Date().toISOString());
+    try{
+      if(conn.state===signalR.HubConnectionState.Connected){
+        // First try the least disruptive recovery: refresh subscriptions on the existing token/socket.
+        console.log("WATCHDOG_TRADE_SUB",await conn.invoke("SubscribeContractTrades",c.id));
+        console.log("WATCHDOG_QUOTE_SUB",await conn.invoke("SubscribeContractQuotes",c.id));
+        try{console.log("WATCHDOG_DEPTH_SUB",await conn.invoke("SubscribeContractMarketDepth",c.id));}catch(e){console.log("WATCHDOG_DEPTH_ERR",e.message);}
+        return;
+      }
+    }catch(e){
+      console.log("WATCHDOG_RESUB_ERR",e.message);
+    }
+    try{
+      if(conn.state!==signalR.HubConnectionState.Disconnected) await conn.stop();
+    }catch{}
+    try{
+      await conn.start();
+      console.log("WATCHDOG_RECONNECTED",conn.connectionId);
+      console.log("WATCHDOG_QUOTE_SUB",await conn.invoke("SubscribeContractQuotes",c.id));
+      console.log("WATCHDOG_TRADE_SUB",await conn.invoke("SubscribeContractTrades",c.id));
+      try{console.log("WATCHDOG_DEPTH_SUB",await conn.invoke("SubscribeContractMarketDepth",c.id));}catch(e){console.log("WATCHDOG_DEPTH_ERR",e.message);}
+    }catch(e){
+      console.error("WATCHDOG_RECONNECT_ERR",e.message);
+    }
+  }
+
+  // Detect silent subscriptions: a websocket can remain "connected" while one or more
+  // ProjectX event streams stop delivering. Re-subscribe before doing a full reconnect.
+  setInterval(()=>{
+    const now=Date.now();
+    const tradeAge=lastTradeReceivedAt?now-Date.parse(lastTradeReceivedAt):Infinity;
+    const quoteAge=lastQuoteReceivedAt?now-Date.parse(lastQuoteReceivedAt):Infinity;
+    const depthAge=lastDepthReceivedAt?now-Date.parse(lastDepthReceivedAt):Infinity;
+    const anyLive=Math.min(quoteAge,depthAge)<8000;
+    if(tradeAge>15000 && anyLive) recoverRealtime("trade stream stale "+Math.round(tradeAge/1000)+"s").catch(()=>{});
+    else if(Math.min(tradeAge,quoteAge,depthAge)>20000) recoverRealtime("all realtime streams stale").catch(()=>{});
+  },5000);
+
   setInterval(()=>sendRelay().catch(e=>console.error("RELAY_ERR",e.message)),2000);
-  setInterval(()=>console.log("COUNTS",{quotes:q,trades:t,depth:d,price:latestPrice,sessionCvd:sessionBuy-sessionSell,rthCvd:rthBuy-rthSell}),10000);
+  setInterval(()=>console.log("COUNTS",{quotes:q,trades:t,depth:d,price:latestPrice,sessionCvd:sessionBuy-sessionSell,rthCvd:rthBuy-rthSell,tradeAgeSec:lastTradeReceivedAt?Math.round((Date.now()-Date.parse(lastTradeReceivedAt))/1000):null}),10000);
 })().catch(e=>{console.error(e);process.exit(1);});
