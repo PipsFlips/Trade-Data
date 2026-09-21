@@ -303,7 +303,7 @@ function drawChart(data){
     ctx.textAlign="left";
     // Put the score about two chart bars inside the OB rectangle.
     const barStep=cw/bars.length;
-    const tagX=Math.min(w-right-40,x1+barStep*2);
+    const tagX=Math.min(w-right-40,x1+barStep*4);
     const zoneTop=Math.min(yy1,yy2), zoneBottom=Math.max(yy1,yy2);
     const tagY=Math.min(zoneBottom-3,Math.max(zoneTop+10,zoneTop+(zoneBottom-zoneTop)/2+3));
     const tw=ctx.measureText(tag).width+7;
