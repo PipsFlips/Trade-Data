@@ -471,8 +471,9 @@ async function refresh(){
     const freshEl=document.getElementById("flowFresh");
     const freshText=document.getElementById("flowFreshText");
     const relayAt=d.diagnostics?.relayReceivedAt ? Date.parse(d.diagnostics.relayReceivedAt) : NaN;
-    const tradeAt=d.flow?.lastTradeAt ? Date.parse(d.flow.lastTradeAt) :
-      (d.diagnostics?.lastTradeAt ? Date.parse(d.diagnostics.lastTradeAt) : NaN);
+    const tradeAt=d.flow?.lastTradeReceivedAt ? Date.parse(d.flow.lastTradeReceivedAt) :
+      (d.diagnostics?.lastTradeReceivedAt ? Date.parse(d.diagnostics.lastTradeReceivedAt) :
+      (d.flow?.lastTradeAt ? Date.parse(d.flow.lastTradeAt) : NaN));
     const relayAge=Number.isFinite(relayAt)?Math.max(0,Math.round((Date.now()-relayAt)/1000)):null;
     const tradeAge=Number.isFinite(tradeAt)?Math.max(0,Math.round((Date.now()-tradeAt)/1000)):null;
 
