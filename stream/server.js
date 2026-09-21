@@ -357,12 +357,33 @@ function nearestLevelDistance(levels,price,side){
   if(!xs.length) return null;
   return side==="BUY"?Math.min(...xs)-price:price-Math.max(...xs);
 }
-function detectOrderBlocks(five,levels,flow5,currentPrice,rthVwap,globexVwap){
-  const rows=five.slice(-240);
+function aggregateBars(rows,minutes){
+  const out=[], by=new Map(), ms=minutes*60000;
+  for(const b of rows||[]){
+    const t=Date.parse(b.t); if(!Number.isFinite(t)) continue;
+    const k=Math.floor(t/ms)*ms;
+    let x=by.get(k);
+    if(!x){
+      x={t:new Date(k).toISOString(),o:+b.o,h:+b.h,l:+b.l,c:+b.c,v:+b.v||0,volume:+b.volume||0,buyVolume:+b.buyVolume||0,sellVolume:+b.sellVolume||0,delta:+b.delta||0,trades:+b.trades||0};
+      by.set(k,x); out.push(x);
+    }else{
+      x.h=Math.max(x.h,+b.h); x.l=Math.min(x.l,+b.l); x.c=+b.c;
+      x.v+=(+b.v||0); x.volume+=(+b.volume||0); x.buyVolume+=(+b.buyVolume||0);
+      x.sellVolume+=(+b.sellVolume||0); x.delta+=(+b.delta||0); x.trades+=(+b.trades||0);
+    }
+  }
+  return out.sort((a,b)=>Date.parse(a.t)-Date.parse(b.t));
+}
+function currentAtr(rows,n=20){
+  const a=trueRangeSeries((rows||[]).slice(-(n+1)));
+  return a.length?a.reduce((x,y)=>x+y,0)/a.length:null;
+}
+function detectOrderBlocks(rows,levels,flowRows,currentPrice,rthVwap,globexVwap,timeframeMinutes=5){
+  rows=(rows||[]).slice(-240);
   if(rows.length<12) return [];
-  const atr=current5mAtr(rows,20)||20;
+  const atr=currentAtr(rows,20)||20;
   const medBody=median(rows.slice(-40).map(b=>Math.abs(+b.c-+b.o)))||4;
-  const flowMap=new Map((flow5||[]).map(x=>[Date.parse(x.t),x]));
+  const flowMap=new Map((flowRows||[]).map(x=>[Date.parse(x.t),x]));
   const blocks=[];
   for(let i=4;i<rows.length-3;i++){
     const origin=rows[i];
@@ -376,8 +397,9 @@ function detectOrderBlocks(five,levels,flow5,currentPrice,rthVwap,globexVwap){
     const impulseClose=+next.at(-1).c;
     const moveUp=impulseHigh-(+origin.h);
     const moveDn=(+origin.l)-impulseLow;
-    const bullish=(+origin.c<+origin.o) && impulseClose>swingHigh+0.5 && moveUp>=1.25*atr;
-    const bearish=(+origin.c>+origin.o) && impulseClose<swingLow-0.5 && moveDn>=1.25*atr;
+    const bosPad=Math.max(.5,(+contract?.tickSize||.25)*2);
+    const bullish=(+origin.c<+origin.o) && impulseClose>swingHigh+bosPad && moveUp>=1.25*atr;
+    const bearish=(+origin.c>+origin.o) && impulseClose<swingLow-bosPad && moveDn>=1.25*atr;
     if(!bullish&&!bearish) continue;
 
     const side=bullish?"BUY":"SELL";
@@ -385,7 +407,7 @@ function detectOrderBlocks(five,levels,flow5,currentPrice,rthVwap,globexVwap){
     const high=bullish?Math.max(+origin.o,+origin.l):Math.max(+origin.o,+origin.h);
     const bodyQuality=Math.abs(+next[0].c-+next[0].o)>=1.25*medBody;
     const post=rows.slice(i+1);
-    const invalid= bullish ? post.some(b=>+b.c<low) : post.some(b=>+b.c>high);
+    const invalid=bullish?post.some(b=>+b.c<low):post.some(b=>+b.c>high);
     if(invalid) continue;
     const touches=post.filter(b=>+b.h>=low && +b.l<=high).length;
     const fresh=touches<=1;
@@ -410,7 +432,7 @@ function detectOrderBlocks(five,levels,flow5,currentPrice,rthVwap,globexVwap){
       side,time:origin.t,low:+low.toFixed(2),high:+high.toFixed(2),
       score:Math.min(100,score),fresh,touches,confluence:confl,
       deltaConfirmed:deltaAligned,vwapAligned,targetRoom:room,
-      invalidated:false
+      timeframeMinutes,invalidated:false
     });
   }
   const unique=[];
@@ -421,7 +443,27 @@ function detectOrderBlocks(five,levels,flow5,currentPrice,rthVwap,globexVwap){
   }
   return unique.slice(0,4);
 }
-function buildMarketAnalysis({currentPrice,levels,f1,f5,signal,traps,orderBlocks,globexVwap,rthVwap,sessionCvd,atr5}){
+function currentOrb(five,f5){
+  const now=nowPT();
+  const day=now.startOf("day");
+  const start=day.set({hour:6,minute:30,second:0,millisecond:0});
+  const end=day.set({hour:6,minute:45,second:0,millisecond:0});
+  if(now<end) return {formed:false,start:start.toISO(),end:end.toISO(),high:null,low:null,volume:null,median5mVolume:null,volumeRatio:null};
+  const rows=between(five||[],start,end);
+  if(!rows.length) return {formed:false,start:start.toISO(),end:end.toISO(),high:null,low:null,volume:null,median5mVolume:null,volumeRatio:null};
+  const z=summary(rows);
+  const prior=(five||[]).filter(b=>Date.parse(b.t)<start.toUTC().toMillis()).slice(-20);
+  const med=median(prior.map(b=>+b.v||0));
+  const orbVol=z.volume||0;
+  return {
+    formed:true,start:start.toISO(),end:end.toISO(),
+    high:z.high,low:z.low,open:z.open,close:z.close,volume:orbVol,
+    median5mVolume:med,
+    volumeRatio:med?+((orbVol/3)/med).toFixed(2):null
+  };
+}
+
+function buildMarketAnalysis({currentPrice,levels,f1,f5,signal,traps,orderBlocks,globexVwap,rthVwap,sessionCvd,atr5,orb,bars5m}){
   const closed1=lastClosedBar(f1||[],1);
   const closed5=lastClosedBar(f5||[],5);
   const closed5s=(f5||[]).filter(b=>Date.parse(b.t)+300000<=Date.now());
@@ -494,12 +536,12 @@ function buildMarketAnalysis({currentPrice,levels,f1,f5,signal,traps,orderBlocks
     })[0];
   if(nearbyOb){
     const dist=currentPrice<+nearbyOb.low?+nearbyOb.low-currentPrice:currentPrice>+nearbyOb.high?currentPrice-+nearbyOb.high:0;
-    if(dist<=atr*.8){
+    if(dist<=atr*.9){
       const tgt=targetFor(nearbyOb.side,(nearbyOb.low+nearbyOb.high)/2);
       setups.push({
         side:nearbyOb.side,
-        title:(nearbyOb.side==="BUY"?"Bullish":"Bearish")+" OB retest "+nearbyOb.score,
-        trigger:"Price trades into "+(+nearbyOb.low).toFixed(2)+"–"+(+nearbyOb.high).toFixed(2)+" and a closed 1m bar confirms "+(nearbyOb.side==="BUY"?"positive":"negative")+" delta away from the zone.",
+        title:(nearbyOb.side==="BUY"?"Bullish":"Bearish")+" 15m OB retest "+nearbyOb.score,
+        trigger:"Price trades into "+(+nearbyOb.low).toFixed(2)+"–"+(+nearbyOb.high).toFixed(2)+" and closed 1m/5m order flow confirms "+(nearbyOb.side==="BUY"?"buying":"selling")+" away from the zone.",
         invalidation:"5m close through the "+(nearbyOb.side==="BUY"?"low ":"high ")+(nearbyOb.side==="BUY"?+nearbyOb.low:+nearbyOb.high).toFixed(2)+".",
         target:tgt?(tgt.label+" "+(+tgt.price).toFixed(2)):"next major liquidity level",
         quality:nearbyOb.score
@@ -507,42 +549,74 @@ function buildMarketAnalysis({currentPrice,levels,f1,f5,signal,traps,orderBlocks
     }
   }
 
+  // Opening Range Breakout: first 15 minutes of NY RTH (06:30-06:45 PT).
+  if(orb?.formed && closed5){
+    const vols=(bars5m||[]).slice(-40,-1).map(b=>+b.v||0).filter(x=>x>0);
+    const medVol=median(vols)||orb.median5mVolume||0;
+    const liveVol=+((bars5m||[]).at(-1)?.v||closed5.volume||0);
+    const volRatio=medVol?liveVol/medVol:null;
+    const d=+closed5.delta||0;
+    const distHi=Math.abs(currentPrice-+orb.high),distLo=Math.abs(currentPrice-+orb.low);
+    const nearHi=distHi<=atr*.75 || currentPrice>=+orb.high;
+    const nearLo=distLo<=atr*.75 || currentPrice<=+orb.low;
+    const longBias=bias==="BULLISH"||bias==="MIXED";
+    const shortBias=bias==="BEARISH"||bias==="MIXED";
+
+    const orbSetup=(side)=>{
+      const long=side==="BUY", level=long?+orb.high:+orb.low;
+      const tgt=targetFor(side,level+(long?.01:-.01));
+      const biasAligned=long?longBias:shortBias;
+      const deltaAligned=long?d>0:d<0;
+      const vwapAligned=Number.isFinite(activeVwap)?(long?currentPrice>activeVwap:currentPrice<activeVwap):false;
+      const volumeStrong=Number.isFinite(volRatio)&&volRatio>=1.2;
+      let quality=25+(biasAligned?20:0)+(volumeStrong?15:0)+(deltaAligned?15:0)+(vwapAligned?10:0);
+      if(tgt) quality+=10;
+      if(signal?.side===side&&signal.score>=65) quality+=5;
+      quality=Math.min(100,quality);
+      setups.push({
+        side,
+        title:"ORB "+(long?"high":"low")+" breakout",
+        trigger:"5m close "+(long?"above ":"below ")+(long?"ORB High ":"ORB Low ")+level.toFixed(2)+
+          " with "+(long?"positive":"negative")+" delta and volume expansion"+
+          (medVol?" (prefer ≥1.2× recent 5m median).":"."),
+        invalidation:"5m close back "+(long?"below ORB High.":"above ORB Low."),
+        target:tgt?(tgt.label+" "+(+tgt.price).toFixed(2)):"next major liquidity level",
+        quality,
+        context:"Bias "+bias+" · volume "+(Number.isFinite(volRatio)?volRatio.toFixed(2)+"×":"n/a")+" · delta "+(d>0?"+":"")+Math.round(d)
+      });
+    };
+    if(nearHi && (longBias || currentPrice>=+orb.high)) orbSetup("BUY");
+    if(nearLo && (shortBias || currentPrice<=+orb.low)) orbSetup("SELL");
+  }
+
   if((bias==="BULLISH"||bias==="MIXED") && above[0]){
     const lvl=above[0],tgt=targetFor("BUY",+lvl.price+0.01);
     setups.push({
-      side:"BUY",
-      title:"Breakout acceptance above "+lvl.label,
+      side:"BUY",title:"Breakout acceptance above "+lvl.label,
       trigger:"Closed 5m acceptance above "+lvl.label+" "+(+lvl.price).toFixed(2)+" with positive 1m/5m delta.",
       invalidation:"5m close back below "+lvl.label+".",
-      target:tgt?(tgt.label+" "+(+tgt.price).toFixed(2)):"next higher major level",
-      quality:null
+      target:tgt?(tgt.label+" "+(+tgt.price).toFixed(2)):"next higher major level",quality:null
     });
   } else if((bias==="BEARISH"||bias==="MIXED") && below[0]){
     const lvl=below[0],tgt=targetFor("SELL",+lvl.price-0.01);
     setups.push({
-      side:"SELL",
-      title:"Breakdown acceptance below "+lvl.label,
+      side:"SELL",title:"Breakdown acceptance below "+lvl.label,
       trigger:"Closed 5m acceptance below "+lvl.label+" "+(+lvl.price).toFixed(2)+" with negative 1m/5m delta.",
       invalidation:"5m close back above "+lvl.label+".",
-      target:tgt?(tgt.label+" "+(+tgt.price).toFixed(2)):"next lower major level",
-      quality:null
+      target:tgt?(tgt.label+" "+(+tgt.price).toFixed(2)):"next lower major level",quality:null
     });
   }
 
   const dedup=[];
-  for(const x of setups){
+  for(const x of setups.sort((a,b)=>(+b.quality||0)-(+a.quality||0))){
     if(dedup.some(y=>y.title===x.title)) continue;
     dedup.push(x);
     if(dedup.length>=3) break;
   }
   return {
-    bias,
-    strength,
-    points:biasPoints,
-    reasons:reasons.slice(0,5),
-    setups:dedup,
+    bias,strength,points:biasPoints,reasons:reasons.slice(0,5),setups:dedup,
     asOf:new Date().toISOString(),
-    note:"Conditional setups only; wait for the listed trigger."
+    note:"Conditional setups only; bias, volume, delta, VWAP, traps, 15m OBs and ORB confluence are evaluated."
   };
 }
 
@@ -946,14 +1020,17 @@ function buildIndicatorPayload() {
   signal.score=Math.min(100,signal.score);
   if(signal.score<50) signal.side="NEUTRAL";
 
+  const bars5m=latestSnapshot.bars?.fiveMinRecent||[];
+  const bars15m=aggregateBars(bars5m,15);
+  const flow15m=aggregateBars(f5,15);
   const orderBlocks=detectOrderBlocks(
-    latestSnapshot.bars?.fiveMinRecent||[],
-    levels,f5,currentPrice,rthVwap,globexVwap
+    bars15m,levels,flow15m,currentPrice,rthVwap,globexVwap,15
   );
+  const orb=currentOrb(bars5m,f5);
   const analysis=buildMarketAnalysis({
     currentPrice,levels,f1,f5,signal,traps,orderBlocks,globexVwap,rthVwap,
     sessionCvd:relayFresh?relayState.currentGlobexCvd:(globexExact?.cvd??null),
-    atr5:current5mAtr(latestSnapshot.bars?.fiveMinRecent||[],20)
+    atr5:current5mAtr(bars5m,20),orb,bars5m
   });
   maybeSendSignalAlert(signal,currentPrice);
 
@@ -977,6 +1054,7 @@ function buildIndicatorPayload() {
     trapCandidates:{buyer:candidateHighs,seller:candidateLows},
     confirmedTraps:traps.slice(0,8),
     orderBlocks,
+    orb,
     signal,
     analysis,
     volatility:{atr5m20:current5mAtr(latestSnapshot.bars?.fiveMinRecent||[],20),atr14Daily:latestSnapshot.analytics?.volatility?.ATR14Daily??null},
