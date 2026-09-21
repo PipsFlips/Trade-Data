@@ -221,6 +221,14 @@ function drawChart(data){
 
   let min=Math.min(...bars.map(b=>+b.l));
   let max=Math.max(...bars.map(b=>+b.h));
+  const sessionIds=new Set(["onh","onl","asiaH","asiaL","londonH","londonL"]);
+  const sessionPrices=(data.levels||[])
+    .filter(l=>sessionIds.has(l.id)&&Number.isFinite(+l.price))
+    .map(l=>+l.price);
+  if(sessionPrices.length){
+    min=Math.min(min,...sessionPrices);
+    max=Math.max(max,...sessionPrices);
+  }
   const rawRange=Math.max(8,max-min);
   const pad=Math.max(10,rawRange*.10);
   min-=pad; max+=pad;
@@ -248,10 +256,15 @@ function drawChart(data){
   }
 
   const current=+data.currentPrice;
-  const visibleLevels=(data.levels||[])
-    .filter(l=>Number.isFinite(+l.price) && +l.price>=min && +l.price<=max)
-    .sort((a,b)=>(b.priority-a.priority) || (Math.abs(+a.price-current)-Math.abs(+b.price-current)))
-    .slice(0,5);
+  const allVisible=(data.levels||[])
+    .filter(l=>Number.isFinite(+l.price) && +l.price>=min && +l.price<=max);
+  const sessionVisible=allVisible.filter(l=>sessionIds.has(l.id));
+  const otherVisible=allVisible
+    .filter(l=>!sessionIds.has(l.id))
+    .sort((a,b)=>(b.priority-a.priority) || (Math.abs(+a.price-current)-Math.abs(+b.price-current)));
+  const visibleLevels=[...sessionVisible,...otherVisible]
+    .filter((l,i,a)=>a.findIndex(x=>x.id===l.id)===i)
+    .slice(0,10);
 
   // Opening Range (06:30-06:45 PT): longer dashed high/low lines.
   if(data.orb?.formed){
