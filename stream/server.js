@@ -689,13 +689,71 @@ function buildIndicatorPayload() {
   const candidateHighs=levels.filter(l=>["resistance","profile"].includes(l.kind)&&l.price>=currentPrice-tick*8).slice(0,5);
   const candidateLows=levels.filter(l=>["support","profile"].includes(l.kind)&&l.price<=currentPrice+tick*8).slice(0,5);
 
-  const recent=f1.slice(-45);
-  const traps=[];
+  // Trap detection: completed 1m sweep + reclaim + next-bar follow-through.
+  // Old/invalidated traps are removed and nearby duplicate levels are clustered.
+  const closed1=f1.filter(b=>Date.parse(b.t)+60000<=Date.now()).slice(-30);
+  const trapCandidatesRaw=[];
+  const maxTrapAgeMs=20*60000;
+  const atr5ForTraps=current5mAtr(latestSnapshot.bars?.fiveMinRecent||[],20)||20;
+  const clusterDistance=Math.max(2.0,atr5ForTraps*.08);
+
   for(const l of levels.filter(x=>x.priority>=80)){
-    const sweptUp=recent.find(b=>b.h>=l.price+tick*2 && b.c<l.price && b.delta>0);
-    if(sweptUp) traps.push({side:"SELL",type:"buyer-trap",level:l.price,label:l.label,time:sweptUp.t,delta:sweptUp.delta});
-    const sweptDn=recent.find(b=>b.l<=l.price-tick*2 && b.c>l.price && b.delta<0);
-    if(sweptDn) traps.push({side:"BUY",type:"seller-trap",level:l.price,label:l.label,time:sweptDn.t,delta:sweptDn.delta});
+    for(let i=Math.max(0,closed1.length-22);i<closed1.length-1;i++){
+      const b=closed1[i],n=closed1[i+1];
+      const age=Date.now()-Date.parse(b.t);
+      if(age<0||age>maxTrapAgeMs) continue;
+
+      // Buyers trapped above resistance/liquidity: positive delta into sweep,
+      // close back below, then next closed minute fails to reclaim.
+      const buyerSweep=+b.h>=+l.price+tick*2 && +b.c<+l.price && +b.delta>0;
+      const buyerFollow=buyerSweep && +n.c<+l.price && +n.h<+b.h;
+      if(buyerFollow){
+        const invalidated=closed1.slice(i+2).some(x=>+x.c>=+l.price+tick*2);
+        if(!invalidated){
+          trapCandidatesRaw.push({
+            side:"SELL",type:"buyer-trap",level:+l.price,label:l.label,time:b.t,
+            delta:+b.delta,priority:l.priority,followTime:n.t,
+            strength:(l.priority||0)+Math.min(20,Math.abs(+b.delta)/100)
+          });
+        }
+      }
+
+      // Sellers trapped below support/liquidity: negative delta into sweep,
+      // close back above, then next closed minute fails to break back down.
+      const sellerSweep=+b.l<=+l.price-tick*2 && +b.c>+l.price && +b.delta<0;
+      const sellerFollow=sellerSweep && +n.c>+l.price && +n.l>+b.l;
+      if(sellerFollow){
+        const invalidated=closed1.slice(i+2).some(x=>+x.c<=+l.price-tick*2);
+        if(!invalidated){
+          trapCandidatesRaw.push({
+            side:"BUY",type:"seller-trap",level:+l.price,label:l.label,time:b.t,
+            delta:+b.delta,priority:l.priority,followTime:n.t,
+            strength:(l.priority||0)+Math.min(20,Math.abs(+b.delta)/100)
+          });
+        }
+      }
+    }
+  }
+
+  // Keep the strongest recent trap in each nearby price cluster, then at most one per side.
+  const clustered=[];
+  for(const t of trapCandidatesRaw.sort((a,b)=>
+    (b.strength-a.strength) || (Date.parse(b.time)-Date.parse(a.time)) ||
+    (Math.abs(a.level-currentPrice)-Math.abs(b.level-currentPrice))
+  )){
+    if(clustered.some(x=>x.side===t.side && Math.abs(x.level-t.level)<=clusterDistance)) continue;
+    clustered.push(t);
+  }
+  const traps=[];
+  for(const side of ["BUY","SELL"]){
+    const best=clustered
+      .filter(x=>x.side===side)
+      .sort((a,b)=>
+        (Date.parse(b.time)-Date.parse(a.time)) ||
+        (b.strength-a.strength) ||
+        (Math.abs(a.level-currentPrice)-Math.abs(b.level-currentPrice))
+      )[0];
+    if(best) traps.push(best);
   }
   traps.sort((x,y)=>Date.parse(y.time)-Date.parse(x.time));
 
