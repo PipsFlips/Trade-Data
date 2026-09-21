@@ -421,6 +421,131 @@ function detectOrderBlocks(five,levels,flow5,currentPrice,rthVwap,globexVwap){
   }
   return unique.slice(0,4);
 }
+function buildMarketAnalysis({currentPrice,levels,f1,f5,signal,traps,orderBlocks,globexVwap,rthVwap,sessionCvd,atr5}){
+  const closed1=lastClosedBar(f1||[],1);
+  const closed5=lastClosedBar(f5||[],5);
+  const closed5s=(f5||[]).filter(b=>Date.parse(b.t)+300000<=Date.now());
+  const prior5=closed5s.length>1?closed5s.at(-2):null;
+  const activeVwap=Number.isFinite(+rthVwap)?+rthVwap:+globexVwap;
+  let biasPoints=0;
+  const reasons=[];
+
+  if(Number.isFinite(activeVwap)){
+    if(currentPrice>activeVwap){biasPoints+=2;reasons.push("price above active VWAP");}
+    else if(currentPrice<activeVwap){biasPoints-=2;reasons.push("price below active VWAP");}
+  }
+  if(closed5&&prior5){
+    if(+closed5.c>+prior5.c){biasPoints+=1;reasons.push("5m structure pushing higher");}
+    else if(+closed5.c<+prior5.c){biasPoints-=1;reasons.push("5m structure pushing lower");}
+  }
+  if(closed5&&Number.isFinite(+closed5.delta)){
+    if(+closed5.delta>0){biasPoints+=1;reasons.push("closed 5m delta positive");}
+    else if(+closed5.delta<0){biasPoints-=1;reasons.push("closed 5m delta negative");}
+  }
+  if(Number.isFinite(+sessionCvd)){
+    if(+sessionCvd>0){biasPoints+=1;reasons.push("session CVD positive");}
+    else if(+sessionCvd<0){biasPoints-=1;reasons.push("session CVD negative");}
+  }
+  const newestTrap=(traps||[])[0];
+  if(newestTrap && Date.now()-Date.parse(newestTrap.time)<=20*60000){
+    if(newestTrap.side==="BUY"){biasPoints+=2;reasons.push("confirmed seller trap");}
+    if(newestTrap.side==="SELL"){biasPoints-=2;reasons.push("confirmed buyer trap");}
+  }
+  if(signal?.side==="BUY" && signal.score>=65){biasPoints+=2;reasons.push("BUY setup score "+signal.score);}
+  if(signal?.side==="SELL" && signal.score>=65){biasPoints-=2;reasons.push("SELL setup score "+signal.score);}
+
+  const bias=biasPoints>=3?"BULLISH":biasPoints<=-3?"BEARISH":Math.abs(biasPoints)<=1?"NEUTRAL":"MIXED";
+  const strength=Math.abs(biasPoints)>=6?"strong":Math.abs(biasPoints)>=3?"moderate":"light";
+  const major=(levels||[]).filter(l=>Number.isFinite(+l.price)&&l.priority>=80);
+  const above=major.filter(l=>+l.price>currentPrice).sort((a,b)=>+a.price-+b.price);
+  const below=major.filter(l=>+l.price<currentPrice).sort((a,b)=>+b.price-+a.price);
+  const setups=[];
+
+  const targetFor=(side,from)=>{
+    const xs=major.filter(l=>side==="BUY"?+l.price>from:+l.price<from)
+      .sort((a,b)=>side==="BUY"?+a.price-+b.price:+b.price-+a.price);
+    return xs[0]||null;
+  };
+
+  if(newestTrap && Date.now()-Date.parse(newestTrap.time)<=20*60000){
+    const side=newestTrap.side;
+    const tgt=targetFor(side,currentPrice);
+    setups.push({
+      side,
+      title:(newestTrap.type==="seller-trap"?"Seller-trap reversal":"Buyer-trap reversal")+" at "+newestTrap.label,
+      trigger:side==="BUY"
+        ?"Hold/reclaim "+newestTrap.label+" with positive closed 1m delta."
+        :"Reject/hold below "+newestTrap.label+" with negative closed 1m delta.",
+      invalidation:side==="BUY"
+        ?"Closed 1m acceptance back below "+newestTrap.label+"."
+        :"Closed 1m acceptance back above "+newestTrap.label+".",
+      target:tgt?(tgt.label+" "+(+tgt.price).toFixed(2)):"next major liquidity level",
+      quality:signal?.side===side?signal.score:null
+    });
+  }
+
+  const atr=Number.isFinite(+atr5)?+atr5:20;
+  const nearbyOb=(orderBlocks||[])
+    .filter(o=>o.fresh && o.score>=65)
+    .sort((a,b)=>{
+      const da=currentPrice<+a.low?+a.low-currentPrice:currentPrice>+a.high?currentPrice-+a.high:0;
+      const db=currentPrice<+b.low?+b.low-currentPrice:currentPrice>+b.high?currentPrice-+b.high:0;
+      return da-db || b.score-a.score;
+    })[0];
+  if(nearbyOb){
+    const dist=currentPrice<+nearbyOb.low?+nearbyOb.low-currentPrice:currentPrice>+nearbyOb.high?currentPrice-+nearbyOb.high:0;
+    if(dist<=atr*.8){
+      const tgt=targetFor(nearbyOb.side,(nearbyOb.low+nearbyOb.high)/2);
+      setups.push({
+        side:nearbyOb.side,
+        title:(nearbyOb.side==="BUY"?"Bullish":"Bearish")+" OB retest "+nearbyOb.score,
+        trigger:"Price trades into "+(+nearbyOb.low).toFixed(2)+"–"+(+nearbyOb.high).toFixed(2)+" and a closed 1m bar confirms "+(nearbyOb.side==="BUY"?"positive":"negative")+" delta away from the zone.",
+        invalidation:"5m close through the "+(nearbyOb.side==="BUY"?"low ":"high ")+(nearbyOb.side==="BUY"?+nearbyOb.low:+nearbyOb.high).toFixed(2)+".",
+        target:tgt?(tgt.label+" "+(+tgt.price).toFixed(2)):"next major liquidity level",
+        quality:nearbyOb.score
+      });
+    }
+  }
+
+  if((bias==="BULLISH"||bias==="MIXED") && above[0]){
+    const lvl=above[0],tgt=targetFor("BUY",+lvl.price+0.01);
+    setups.push({
+      side:"BUY",
+      title:"Breakout acceptance above "+lvl.label,
+      trigger:"Closed 5m acceptance above "+lvl.label+" "+(+lvl.price).toFixed(2)+" with positive 1m/5m delta.",
+      invalidation:"5m close back below "+lvl.label+".",
+      target:tgt?(tgt.label+" "+(+tgt.price).toFixed(2)):"next higher major level",
+      quality:null
+    });
+  } else if((bias==="BEARISH"||bias==="MIXED") && below[0]){
+    const lvl=below[0],tgt=targetFor("SELL",+lvl.price-0.01);
+    setups.push({
+      side:"SELL",
+      title:"Breakdown acceptance below "+lvl.label,
+      trigger:"Closed 5m acceptance below "+lvl.label+" "+(+lvl.price).toFixed(2)+" with negative 1m/5m delta.",
+      invalidation:"5m close back above "+lvl.label+".",
+      target:tgt?(tgt.label+" "+(+tgt.price).toFixed(2)):"next lower major level",
+      quality:null
+    });
+  }
+
+  const dedup=[];
+  for(const x of setups){
+    if(dedup.some(y=>y.title===x.title)) continue;
+    dedup.push(x);
+    if(dedup.length>=3) break;
+  }
+  return {
+    bias,
+    strength,
+    points:biasPoints,
+    reasons:reasons.slice(0,5),
+    setups:dedup,
+    asOf:new Date().toISOString(),
+    note:"Conditional setups only; wait for the listed trigger."
+  };
+}
+
 async function sendSmsAlert(message){
   if(!ALERT_SMS_TO||!TWILIO_ACCOUNT_SID||!TWILIO_AUTH_TOKEN||!TWILIO_FROM_NUMBER) return false;
   const auth=Buffer.from(TWILIO_ACCOUNT_SID+":"+TWILIO_AUTH_TOKEN).toString("base64");
@@ -825,6 +950,11 @@ function buildIndicatorPayload() {
     latestSnapshot.bars?.fiveMinRecent||[],
     levels,f5,currentPrice,rthVwap,globexVwap
   );
+  const analysis=buildMarketAnalysis({
+    currentPrice,levels,f1,f5,signal,traps,orderBlocks,globexVwap,rthVwap,
+    sessionCvd:relayFresh?relayState.currentGlobexCvd:(globexExact?.cvd??null),
+    atr5:current5mAtr(latestSnapshot.bars?.fiveMinRecent||[],20)
+  });
   maybeSendSignalAlert(signal,currentPrice);
 
   return {
@@ -848,6 +978,7 @@ function buildIndicatorPayload() {
     confirmedTraps:traps.slice(0,8),
     orderBlocks,
     signal,
+    analysis,
     volatility:{atr5m20:current5mAtr(latestSnapshot.bars?.fiveMinRecent||[],20),atr14Daily:latestSnapshot.analytics?.volatility?.ATR14Daily??null},
     diagnostics:{tradeEventsReceived,tradeEventsMatched,quoteEventsReceived,depthEventsReceived,lastRawTradeEvent,lastRawQuoteEvent,lastRawDepthEvent,reconnectCount,subscriptionResults,relayFresh:Boolean(relayFresh),relayReceivedAt:relayState?.receivedAt||null,alertScoreThreshold:ALERT_SCORE_THRESHOLD,smsConfigured:Boolean(ALERT_SMS_TO&&TWILIO_ACCOUNT_SID&&TWILIO_AUTH_TOKEN&&TWILIO_FROM_NUMBER)},
     profiles:{currentGlobex:globexExact,currentRTH:rthExact},
