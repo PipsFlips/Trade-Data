@@ -505,7 +505,7 @@ function currentOrb(five,f5){
   };
 }
 
-function buildMarketAnalysis({currentPrice,levels,f1,f5,signal,traps,orderBlocks,globexVwap,rthVwap,sessionCvd,atr5,orb,bars5m,delta15,profiles}){
+function buildMarketAnalysis({currentPrice,levels,f1,f5,signal,traps,orderBlocks,globexVwap,rthVwap,sessionCvd,atr5,orb,bars5m,delta15,profiles,icebergs}){
   const closed1=lastClosedBar(f1||[],1);
   const closed5=lastClosedBar(f5||[],5);
   const closed5s=(f5||[]).filter(b=>Date.parse(b.t)+300000<=Date.now());
@@ -539,9 +539,32 @@ function buildMarketAnalysis({currentPrice,levels,f1,f5,signal,traps,orderBlocks
   if(delta15?.direction==="BULLISH"){biasPoints+=2;reasons.push("15m delta trend positive");}
   else if(delta15?.direction==="BEARISH"){biasPoints-=2;reasons.push("15m delta trend negative");}
   const newestTrap=(traps||[])[0];
+  if(iceberg){
+    const side=iceberg.side,tgt=targetFor(side,currentPrice);
+    const long=side==="BUY";
+    setups.push({
+      side,
+      title:(long?"Buy":"Sell")+" iceberg absorption "+iceberg.score,
+      trigger:(long
+        ?"Aggressive selling fails to break "+iceberg.price.toFixed(2)+"; enter only after price reclaims/holds above the level with positive 1m delta."
+        :"Aggressive buying fails to lift "+iceberg.price.toFixed(2)+"; enter only after price rejects/holds below the level with negative 1m delta."),
+      invalidation:(long
+        ?"Acceptance below the iceberg price after confirmation."
+        :"Acceptance above the iceberg price after confirmation."),
+      target:tgt?(tgt.label+" "+(+tgt.price).toFixed(2)):"next major liquidity level",
+      quality:iceberg.score,
+      context:"Probable hidden "+(long?"buyer":"seller")+" · "+Math.round(iceberg.aggressorVolume)+" aggressive contracts absorbed · "+iceberg.refreshes+" depth replenishments"
+    });
+  }
+
   if(newestTrap && Date.now()-Date.parse(newestTrap.time)<=20*60000){
     if(newestTrap.side==="BUY"){biasPoints+=2;reasons.push("confirmed seller trap");}
     if(newestTrap.side==="SELL"){biasPoints-=2;reasons.push("confirmed buyer trap");}
+  }
+  const iceberg=(icebergs||[]).filter(x=>(+x.ageSec||999)<=20 && (+x.score||0)>=60)[0]||null;
+  if(iceberg){
+    if(iceberg.side==="BUY"){biasPoints+=2;reasons.push("probable buy iceberg "+iceberg.price.toFixed(2));}
+    else if(iceberg.side==="SELL"){biasPoints-=2;reasons.push("probable sell iceberg "+iceberg.price.toFixed(2));}
   }
   if(signal?.side==="BUY" && signal.score>=65){biasPoints+=2;reasons.push("BUY setup score "+signal.score);}
   if(signal?.side==="SELL" && signal.score>=65){biasPoints-=2;reasons.push("SELL setup score "+signal.score);}
@@ -1085,7 +1108,8 @@ function buildIndicatorPayload() {
     sessionCvd:relayFresh?relayState.currentGlobexCvd:(globexExact?.cvd??null),
     atr5:current5mAtr(bars5m,20),orb,bars5m,
     delta15:deltaTrend15m(f5),
-    profiles:{session:globexExact,rth:rthExact}
+    profiles:{session:globexExact,rth:rthExact},
+    icebergs:relayFresh?(relayState.icebergs||[]):[]
   });
   maybeSendSignalAlert(signal,currentPrice);
 
@@ -1113,6 +1137,7 @@ function buildIndicatorPayload() {
     trapCandidates:{buyer:candidateHighs,seller:candidateLows},
     confirmedTraps:traps.slice(0,8),
     orderBlocks,
+    icebergs:relayFresh?(relayState.icebergs||[]):[],
     orb,
     signal,
     analysis,
