@@ -437,7 +437,7 @@ async function refresh(){
     document.getElementById("score").textContent=(d.signal?.score||0)+"/100";
     document.getElementById("reason").textContent=(d.signal?.reasons||[]).join(" • ")||"No confirmed trap signal yet.";
     nearestLevels(d);trapRows(d);drawChart(d);
-    status.textContent=(d.connected?"Live feed connected":"Feed reconnecting")+" · auto refresh 5s";
+    status.textContent=(d.connected?"Live feed connected":"Feed reconnecting")+" · auto refresh 2s";
   }catch(e){
     status.textContent="Indicator error: "+e.message;
   }
@@ -449,7 +449,7 @@ document.querySelectorAll(".winbtn").forEach(btn=>btn.addEventListener("click",(
   if(lastData) drawChart(lastData);
 }));
 window.addEventListener("resize",()=>{if(lastData) drawChart(lastData);});
-refresh();setInterval(refresh,5000);
+refresh();setInterval(refresh,2000);
 </script>
 </body>
 </html>
