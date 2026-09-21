@@ -82,8 +82,6 @@ canvas{display:block;width:100%;height:410px;border-radius:8px;background:#0d131
   </div>
 
   <div class="grid">
-    <div class="card"><div class="k">Session VWAP</div><div class="v" id="gvwap">—</div></div>
-    <div class="card"><div class="k" style="color:#f2c94c">NY VWAP</div><div class="v" id="rvwap">—</div></div>
     <div class="card"><div class="k">1m Delta</div><div class="v" id="delta1">—</div></div>
     <div class="card"><div class="k">5m Delta</div><div class="v" id="delta5">—</div></div>
     <div class="card"><div class="k">Session CVD 15:00+</div><div class="v" id="sessionCvd">—</div></div>
@@ -361,9 +359,9 @@ function drawChart(data){
   const sessionSeries=vwapSeries(allBars,"session");
   const nySeries=vwapSeries(allBars,"ny");
   const firstVisible=Math.max(0,allBars.length-bars.length);
-  function drawVwap(series,col){
+  function drawVwap(series,col,label){
     ctx.strokeStyle=col;ctx.lineWidth=1.8;ctx.setLineDash([]);
-    let started=false;
+    let started=false,lastVisible=null;
     for(let i=0;i<bars.length;i++){
       const point=series[firstVisible+i];
       const p=point?.v;
@@ -374,11 +372,26 @@ function drawChart(data){
       const xx=x(i),py=y(+p);
       if(!started){ctx.beginPath();ctx.moveTo(xx,py);started=true;}
       else ctx.lineTo(xx,py);
+      lastVisible={p:+p,py};
     }
     if(started) ctx.stroke();
+
+    // Show the VWAP value on the right price axis only while that VWAP line is active.
+    if(lastVisible){
+      const txt=fmt(lastVisible.p);
+      ctx.save();
+      ctx.font="8px -apple-system,BlinkMacSystemFont,Segoe UI,Arial";
+      ctx.textAlign="left";ctx.textBaseline="middle";
+      const tw=ctx.measureText(txt).width;
+      ctx.fillStyle="rgba(13,19,26,.90)";
+      ctx.fillRect(w-right+2,lastVisible.py-6,Math.min(right-4,tw+6),12);
+      ctx.fillStyle=col;
+      ctx.fillText(txt,w-right+5,lastVisible.py);
+      ctx.restore();
+    }
   }
-  drawVwap(sessionSeries,"#ffffff");
-  drawVwap(nySeries,"#f2c94c");
+  drawVwap(sessionSeries,"#ffffff","Session VWAP");
+  drawVwap(nySeries,"#f2c94c","NY VWAP");
 
   // Horizontal time axis.
   const axisY=top+ch+18;
@@ -493,8 +506,6 @@ async function refresh(){
       freshEl.className="flowFresh stale";
       freshText.textContent="ORDER FLOW NO TRADE DATA";
     }
-    document.getElementById("gvwap").textContent=fmt(d.vwap?.globex);
-    document.getElementById("rvwap").textContent=fmt(d.vwap?.rth);
     const d1=d.flow?.oneMin?.at(-1)?.delta;
     document.getElementById("delta1").textContent=Number.isFinite(+d1)?((+d1>0?"+":"")+nfmt(d1)):"—";
     document.getElementById("delta1").className="v "+(+d1>0?"buy":+d1<0?"sell":"");
