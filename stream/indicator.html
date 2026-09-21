@@ -59,6 +59,8 @@ canvas{display:block;width:100%;height:410px;border-radius:8px;background:#0d131
 .dot{display:inline-block;width:7px;height:7px;border-radius:50%;margin-right:5px;background:var(--muted)}
 .dot.buy{background:var(--green)} .dot.sell{background:var(--red)}
 .status{font-size:11px;color:var(--muted);text-align:center;padding:4px 0}
+.viewerCount{font-size:10px;color:var(--muted);text-align:center;padding:2px 0 6px}
+.viewerCount.multi{color:var(--amber)}
 @media (max-width:600px){
   .wrap{padding:8px}
   .price{font-size:25px}
@@ -160,9 +162,38 @@ canvas{display:block;width:100%;height:410px;border-radius:8px;background:#0d131
   </div>
 
   <div class="status" id="status">Connecting…</div>
+  <div class="viewerCount" id="viewerCount">Viewers: —</div>
 </div>
 
 <script>
+let viewerId=null;
+try{
+  viewerId=localStorage.getItem("mnqViewerId");
+  if(!viewerId){
+    viewerId=(crypto?.randomUUID?crypto.randomUUID():"v-"+Date.now()+"-"+Math.random().toString(36).slice(2));
+    localStorage.setItem("mnqViewerId",viewerId);
+  }
+}catch{
+  viewerId="v-"+Date.now()+"-"+Math.random().toString(36).slice(2);
+}
+async function sendViewerHeartbeat(){
+  try{
+    const r=await fetch("/viewer-heartbeat",{
+      method:"POST",
+      headers:{"Content-Type":"application/json"},
+      body:JSON.stringify({id:viewerId}),
+      cache:"no-store"
+    });
+    if(!r.ok) return;
+    const j=await r.json();
+    const el=document.getElementById("viewerCount");
+    if(el){
+      el.textContent="Viewers: "+j.count;
+      el.className="viewerCount"+(j.count>1?" multi":"");
+    }
+  }catch{}
+}
+
 const fmt=n=>Number.isFinite(+n)?(+n).toLocaleString(undefined,{minimumFractionDigits:2,maximumFractionDigits:2}):"—";
 const nfmt=n=>Number.isFinite(+n)?Math.round(+n).toLocaleString():"—";
 const colorForKind=k=>k==="support"?"#31c48d":k==="resistance"?"#f06565":k==="profile"?"#9aa7b4":"#a6b2bf";
@@ -621,6 +652,8 @@ document.querySelectorAll(".layerbtn").forEach(btn=>{
 });
 window.addEventListener("resize",()=>{if(lastData) drawChart(lastData);});
 refresh();setInterval(refresh,2000);
+sendViewerHeartbeat();setInterval(sendViewerHeartbeat,15000);
+document.addEventListener("visibilitychange",()=>{if(!document.hidden) sendViewerHeartbeat();});
 </script>
 </body>
 </html>
