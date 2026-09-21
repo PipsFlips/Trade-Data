@@ -247,22 +247,29 @@ function previousFullGlobex(rows) {
 function currentSessions(rows) {
   const now=nowPT();
   const today=now.startOf("day");
-  const prev=today.minus({days:1});
+  const sessionStart=(now.hour>=15?today:today.minus({days:1})).set({hour:15,minute:0,second:0,millisecond:0});
+  const nextDay=sessionStart.plus({days:1}).startOf("day");
+  const overnightEnd=nextDay.set({hour:6,minute:30,second:0,millisecond:0});
+  const asiaStart=sessionStart.set({hour:17,minute:0,second:0,millisecond:0});
+  const asiaEnd=nextDay.set({hour:0,minute:0,second:0,millisecond:0});
+  const londonStart=nextDay.set({hour:0,minute:0,second:0,millisecond:0});
+  const londonEnd=nextDay.set({hour:5,minute:20,second:0,millisecond:0});
 
-  const globexStart=prev.set({hour:15,minute:0,second:0,millisecond:0});
-  const asiaStart=prev.set({hour:17,minute:0,second:0,millisecond:0});
-  const asiaEnd=today.set({hour:0,minute:0,second:0,millisecond:0});
-  const londonStart=today.set({hour:0,minute:0,second:0,millisecond:0});
-  const londonEnd=today.set({hour:5,minute:20,second:0,millisecond:0});
+  // Overnight levels/profile are defined only through the 06:30 PT RTH open.
+  // Before 06:30 they build live; after 06:30 they are frozen for the day.
+  const onStop=now<overnightEnd?now:overnightEnd;
+  const asiaStop=now<asiaEnd?now:asiaEnd;
+  const londonStop=now<londonEnd?now:londonEnd;
+  const overnightRows=between(rows,sessionStart,onStop);
 
-  const overnightRows=between(rows,globexStart,now);
   return {
     overnight:summary(overnightRows),
-    asia:summary(between(rows,asiaStart,asiaEnd)),
-    london:summary(between(rows,londonStart,londonEnd)),
+    asia:now>=asiaStart?summary(between(rows,asiaStart,asiaStop)):null,
+    london:now>=londonStart?summary(between(rows,londonStart,londonStop)):null,
     overnightRows,
     bounds:{
-      globexStartPacific:globexStart.toISO(),
+      globexStartPacific:sessionStart.toISO(),
+      overnightEndPacific:overnightEnd.toISO(),
       asiaStartPacific:asiaStart.toISO(),
       asiaEndPacific:asiaEnd.toISO(),
       londonStartPacific:londonStart.toISO(),
@@ -1041,9 +1048,9 @@ function buildIndicatorPayload() {
     {id:"prevVah",label:"Prev VAH",price:p.previousRTH_exact?.vah ?? p.previousRTH_estimated?.vah,kind:"profile",priority:88},
     {id:"prevPoc",label:"Prev POC",price:p.previousRTH_exact?.poc ?? p.previousRTH_estimated?.poc,kind:"profile",priority:90},
     {id:"prevVal",label:"Prev VAL",price:p.previousRTH_exact?.val ?? p.previousRTH_estimated?.val,kind:"profile",priority:88},
-    {id:"onVah",label:"ON VAH",price:globexExact?.vah ?? p.currentOvernight_estimated?.vah,kind:"profile",priority:84},
-    {id:"onPoc",label:"ON POC",price:globexExact?.poc ?? p.currentOvernight_estimated?.poc,kind:"profile",priority:86},
-    {id:"onVal",label:"ON VAL",price:globexExact?.val ?? p.currentOvernight_estimated?.val,kind:"profile",priority:84},
+    {id:"onVah",label:"ON VAH",price:p.currentOvernight_estimated?.vah,kind:"profile",priority:84},
+    {id:"onPoc",label:"ON POC",price:p.currentOvernight_estimated?.poc,kind:"profile",priority:86},
+    {id:"onVal",label:"ON VAL",price:p.currentOvernight_estimated?.val,kind:"profile",priority:84},
     ...((a.oneHourPivots||[]).filter(x=>!x.sweptLater).slice(0,6).map((x,i)=>({
       id:"pivot"+i,label:`1H ${x.type==="high"?"H":"L"} ${x.significanceScore}`,price:x.price,
       kind:x.type==="high"?"resistance":"support",priority:70-i
