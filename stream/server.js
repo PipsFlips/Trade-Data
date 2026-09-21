@@ -539,24 +539,6 @@ function buildMarketAnalysis({currentPrice,levels,f1,f5,signal,traps,orderBlocks
   if(delta15?.direction==="BULLISH"){biasPoints+=2;reasons.push("15m delta trend positive");}
   else if(delta15?.direction==="BEARISH"){biasPoints-=2;reasons.push("15m delta trend negative");}
   const newestTrap=(traps||[])[0];
-  if(iceberg){
-    const side=iceberg.side,tgt=targetFor(side,currentPrice);
-    const long=side==="BUY";
-    setups.push({
-      side,
-      title:(long?"Buy":"Sell")+" iceberg absorption "+iceberg.score,
-      trigger:(long
-        ?"Aggressive selling fails to break "+iceberg.price.toFixed(2)+"; enter only after price reclaims/holds above the level with positive 1m delta."
-        :"Aggressive buying fails to lift "+iceberg.price.toFixed(2)+"; enter only after price rejects/holds below the level with negative 1m delta."),
-      invalidation:(long
-        ?"Acceptance below the iceberg price after confirmation."
-        :"Acceptance above the iceberg price after confirmation."),
-      target:tgt?(tgt.label+" "+(+tgt.price).toFixed(2)):"next major liquidity level",
-      quality:iceberg.score,
-      context:"Probable hidden "+(long?"buyer":"seller")+" · "+Math.round(iceberg.aggressorVolume)+" aggressive contracts absorbed · "+iceberg.refreshes+" depth replenishments"
-    });
-  }
-
   if(newestTrap && Date.now()-Date.parse(newestTrap.time)<=20*60000){
     if(newestTrap.side==="BUY"){biasPoints+=2;reasons.push("confirmed seller trap");}
     if(newestTrap.side==="SELL"){biasPoints-=2;reasons.push("confirmed buyer trap");}
@@ -581,6 +563,24 @@ function buildMarketAnalysis({currentPrice,levels,f1,f5,signal,traps,orderBlocks
       .sort((a,b)=>side==="BUY"?+a.price-+b.price:+b.price-+a.price);
     return xs[0]||null;
   };
+
+  if(iceberg){
+    const side=iceberg.side,tgt=targetFor(side,currentPrice);
+    const long=side==="BUY";
+    setups.push({
+      side,
+      title:(long?"Buy":"Sell")+" iceberg absorption "+iceberg.score,
+      trigger:(long
+        ?"Aggressive selling fails to break "+iceberg.price.toFixed(2)+"; enter only after price reclaims/holds above the level with positive 1m delta."
+        :"Aggressive buying fails to lift "+iceberg.price.toFixed(2)+"; enter only after price rejects/holds below the level with negative 1m delta."),
+      invalidation:(long
+        ?"Acceptance below the iceberg price after confirmation."
+        :"Acceptance above the iceberg price after confirmation."),
+      target:tgt?(tgt.label+" "+(+tgt.price).toFixed(2)):"next major liquidity level",
+      quality:iceberg.score,
+      context:"Probable hidden "+(long?"buyer":"seller")+" · "+Math.round(iceberg.aggressorVolume)+" aggressive contracts absorbed · "+iceberg.refreshes+" depth replenishments"
+    });
+  }
 
   if(newestTrap && Date.now()-Date.parse(newestTrap.time)<=20*60000){
     const side=newestTrap.side;
