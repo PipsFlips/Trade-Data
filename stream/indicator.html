@@ -98,6 +98,11 @@ canvas{display:block;width:100%;height:410px;border-radius:8px;background:#0d131
     <div class="analysisNote" id="analysisNote">Conditional setups only.</div>
   </div>
 
+  <div class="section">
+    <h3>Iceberg / absorption</h3>
+    <div class="rows" id="icebergs"></div>
+  </div>
+
   <div class="chartCard">
     <div class="chartHead">
       <div class="chartTitle">5-minute structure + live levels</div>
@@ -448,6 +453,18 @@ function trapRows(data){
   el.innerHTML=ts.map(t=>'<div class="row"><span><i class="dot '+(t.side==="BUY"?"buy":"sell")+'"></i>'+t.type+' · '+t.label+'</span><b>'+fmt(t.level)+'</b></div>').join("")||'<div class="reason">No confirmed traps in the recent window.</div>';
 }
 
+function renderIcebergs(data){
+  const el=document.getElementById("icebergs");
+  const xs=(data.icebergs||[]).slice(0,3);
+  el.innerHTML=xs.map(x=>{
+    const cls=x.side==="BUY"?"buy":"sell";
+    const label=x.side==="BUY"?"BUY ICEBERG":"SELL ICEBERG";
+    return '<div class="row"><span><i class="dot '+cls+'"></i>'+label+' · '+Math.round(+x.score||0)+'/100</span>'+
+      '<b class="'+cls+'">'+fmt(x.price)+'</b>'+
+      '<span style="display:none"></span></div>';
+  }).join("")||'<div class="reason">No probable iceberg absorption detected.</div>';
+}
+
 function renderAnalysis(data){
   const a=data.analysis||{};
   const pill=document.getElementById("biasPill");
@@ -522,7 +539,7 @@ async function refresh(){
     se.textContent=sig;se.className="s "+(sig==="BUY"?"buy":sig==="SELL"?"sell":"neutral");
     document.getElementById("score").textContent=(d.signal?.score||0)+"/100";
     document.getElementById("reason").textContent=(d.signal?.reasons||[]).join(" • ")||"No confirmed trap signal yet.";
-    renderAnalysis(d);nearestLevels(d);trapRows(d);drawChart(d);
+    renderAnalysis(d);renderIcebergs(d);nearestLevels(d);trapRows(d);drawChart(d);
     status.textContent=(d.connected?"Live feed connected":"Feed reconnecting")+" · auto refresh 2s";
   }catch(e){
     status.textContent="Indicator error: "+e.message;
