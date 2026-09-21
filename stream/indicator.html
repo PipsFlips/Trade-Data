@@ -41,6 +41,19 @@ canvas{display:block;width:100%;height:410px;border-radius:8px;background:#0d131
 .row{display:flex;justify-content:space-between;gap:10px;background:var(--panel2);border-radius:8px;padding:7px 8px;font-size:12px}
 .row span:first-child{color:var(--muted)}
 .reason{font-size:12px;color:#c9d2dc;line-height:1.4}
+.analysisHead{display:flex;align-items:center;justify-content:space-between;gap:8px;margin-bottom:7px}
+.biasPill{font-size:11px;font-weight:850;letter-spacing:.05em;border-radius:999px;padding:5px 9px;border:1px solid var(--line);background:var(--panel2)}
+.biasPill.bullish{color:var(--green);border-color:rgba(49,196,141,.45)}
+.biasPill.bearish{color:var(--red);border-color:rgba(240,101,101,.45)}
+.biasPill.mixed,.biasPill.neutral{color:var(--amber);border-color:rgba(242,184,75,.45)}
+.analysisWhy{font-size:11px;color:var(--muted);line-height:1.35;margin-bottom:8px}
+.setups{display:grid;gap:6px}
+.setup{background:var(--panel2);border:1px solid var(--line);border-radius:9px;padding:8px}
+.setupTitle{display:flex;justify-content:space-between;gap:8px;font-size:12px;font-weight:800;margin-bottom:5px}
+.setupSide{font-size:10px;font-weight:900;letter-spacing:.06em}
+.setupLine{font-size:11px;line-height:1.35;color:#c9d2dc;margin-top:3px}
+.setupLine b{color:var(--muted);font-weight:650}
+.analysisNote{font-size:9px;color:var(--muted);margin-top:7px}
 .dot{display:inline-block;width:7px;height:7px;border-radius:50%;margin-right:5px;background:var(--muted)}
 .dot.buy{background:var(--green)} .dot.sell{background:var(--red)}
 .status{font-size:11px;color:var(--muted);text-align:center;padding:4px 0}
@@ -75,6 +88,16 @@ canvas{display:block;width:100%;height:410px;border-radius:8px;background:#0d131
     <div class="card"><div class="k">5m Delta</div><div class="v" id="delta5">—</div></div>
     <div class="card"><div class="k">Session CVD 15:00+</div><div class="v" id="sessionCvd">—</div></div>
     <div class="card"><div class="k">NY CVD 06:30+</div><div class="v" id="cvd">—</div></div>
+  </div>
+
+  <div class="section" id="analysisBox">
+    <div class="analysisHead">
+      <h3 style="margin:0">Live market analysis</h3>
+      <div class="biasPill neutral" id="biasPill">NEUTRAL</div>
+    </div>
+    <div class="analysisWhy" id="analysisWhy">Waiting for enough live data.</div>
+    <div class="setups" id="setups"></div>
+    <div class="analysisNote" id="analysisNote">Conditional setups only.</div>
   </div>
 
   <div class="chartCard">
@@ -392,6 +415,29 @@ function trapRows(data){
   el.innerHTML=ts.map(t=>'<div class="row"><span><i class="dot '+(t.side==="BUY"?"buy":"sell")+'"></i>'+t.type+' · '+t.label+'</span><b>'+fmt(t.level)+'</b></div>').join("")||'<div class="reason">No confirmed traps in the recent window.</div>';
 }
 
+function renderAnalysis(data){
+  const a=data.analysis||{};
+  const pill=document.getElementById("biasPill");
+  const bias=a.bias||"NEUTRAL";
+  pill.textContent=bias+(a.strength?" · "+String(a.strength).toUpperCase():"");
+  pill.className="biasPill "+bias.toLowerCase();
+  document.getElementById("analysisWhy").textContent=(a.reasons||[]).join(" • ")||"No clear directional confluence yet.";
+  const el=document.getElementById("setups");
+  const rows=(a.setups||[]).slice(0,3);
+  el.innerHTML=rows.map(x=>{
+    const side=x.side||"WATCH";
+    const cls=side==="BUY"?"buy":side==="SELL"?"sell":"neutral";
+    const q=Number.isFinite(+x.quality)?" · "+Math.round(+x.quality)+"/100":"";
+    return '<div class="setup">'+
+      '<div class="setupTitle"><span>'+x.title+'</span><span class="setupSide '+cls+'">'+side+q+'</span></div>'+
+      '<div class="setupLine"><b>Trigger:</b> '+x.trigger+'</div>'+
+      '<div class="setupLine"><b>Invalidation:</b> '+x.invalidation+'</div>'+
+      '<div class="setupLine"><b>Target:</b> '+x.target+'</div>'+
+    '</div>';
+  }).join("")||'<div class="reason">No qualified setup right now. Wait for price to interact with a major level, trap, or order block.</div>';
+  document.getElementById("analysisNote").textContent=a.note||"Conditional setups only; wait for confirmation.";
+}
+
 async function refresh(){
   const status=document.getElementById("status");
   try{
@@ -436,7 +482,7 @@ async function refresh(){
     se.textContent=sig;se.className="s "+(sig==="BUY"?"buy":sig==="SELL"?"sell":"neutral");
     document.getElementById("score").textContent=(d.signal?.score||0)+"/100";
     document.getElementById("reason").textContent=(d.signal?.reasons||[]).join(" • ")||"No confirmed trap signal yet.";
-    nearestLevels(d);trapRows(d);drawChart(d);
+    renderAnalysis(d);nearestLevels(d);trapRows(d);drawChart(d);
     status.textContent=(d.connected?"Live feed connected":"Feed reconnecting")+" · auto refresh 2s";
   }catch(e){
     status.textContent="Indicator error: "+e.message;
