@@ -49,6 +49,13 @@ let subscriptionResults = {quotes:null,trades:null,depth:null};
 let lastSignalAlert = {key:null,at:0};
 let relayState = null;
 let signalStability = {setupKey:null,cvdAlignedSince:null,targetRoomAward:null};
+const activeViewers=new Map();
+const VIEWER_TTL_MS=45000;
+function activeViewerCount(){
+  const now=Date.now();
+  for(const [id,at] of activeViewers) if(now-at>VIEWER_TTL_MS) activeViewers.delete(id);
+  return activeViewers.size;
+}
 
 async function authenticate() {
   const r = await fetch(API_BASE + "/api/Auth/loginKey", {
@@ -1483,6 +1490,15 @@ app.get("/health",(req,res)=>res.json({
 }));
 
 app.get("/mnq-indicator.json",(req,res)=>res.json(buildIndicatorPayload()));
+
+app.post("/viewer-heartbeat",(req,res)=>{
+  const id=String(req.body?.id||"").trim();
+  if(!id || id.length>128) return res.status(400).json({ok:false,error:"invalid viewer id"});
+  activeViewers.set(id,Date.now());
+  res.json({ok:true,count:activeViewerCount()});
+});
+
+app.get("/viewer-count",(req,res)=>res.json({count:activeViewerCount()}));
 
 app.get("/indicator",(req,res)=>{
   try{ res.type("html").send(fs.readFileSync(__dirname+"/indicator.html","utf8")); }
