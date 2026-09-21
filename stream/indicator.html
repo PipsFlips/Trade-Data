@@ -116,8 +116,10 @@ canvas{display:block;width:100%;height:410px;border-radius:8px;background:#0d131
       <span><i style="display:inline-block;width:12px;border-top:1px dotted #f2c94c;vertical-align:middle;margin-right:4px"></i>Asia 17:00</span>
       <span><i style="display:inline-block;width:12px;border-top:1px dotted #57a4ff;vertical-align:middle;margin-right:4px"></i>London 00:00</span>
       <span><i style="display:inline-block;width:12px;border-top:1px dotted #ffffff;vertical-align:middle;margin-right:4px"></i>NY 06:30</span>
-      <span><i style="display:inline-block;width:12px;height:7px;background:rgba(49,196,141,.12);border:1px solid rgba(49,196,141,.5);vertical-align:middle;margin-right:4px"></i>Bull OB</span>
-      <span><i style="display:inline-block;width:12px;height:7px;background:rgba(240,101,101,.12);border:1px solid rgba(240,101,101,.5);vertical-align:middle;margin-right:4px"></i>Bear OB</span>
+      <span><i style="display:inline-block;width:12px;height:7px;background:rgba(49,196,141,.12);border:1px solid rgba(49,196,141,.5);vertical-align:middle;margin-right:4px"></i>15m Bull OB</span>
+      <span><i style="display:inline-block;width:12px;height:7px;background:rgba(240,101,101,.12);border:1px solid rgba(240,101,101,.5);vertical-align:middle;margin-right:4px"></i>15m Bear OB</span>
+      <span><i style="display:inline-block;width:14px;border-top:2px dashed #31c48d;vertical-align:middle;margin-right:4px"></i>ORB H</span>
+      <span><i style="display:inline-block;width:14px;border-top:2px dashed #f06565;vertical-align:middle;margin-right:4px"></i>ORB L</span>
     </div>
     <canvas id="chart"></canvas>
   </div>
@@ -243,6 +245,24 @@ function drawChart(data){
     .sort((a,b)=>(b.priority-a.priority) || (Math.abs(+a.price-current)-Math.abs(+b.price-current)))
     .slice(0,5);
 
+  // Opening Range (06:30-06:45 PT): longer dashed high/low lines.
+  if(data.orb?.formed){
+    const orbLines=[
+      {p:+data.orb.high,label:"ORB H",col:"#31c48d"},
+      {p:+data.orb.low,label:"ORB L",col:"#f06565"}
+    ];
+    ctx.font="bold 9px -apple-system,BlinkMacSystemFont,Segoe UI,Arial";
+    for(const o of orbLines){
+      if(!Number.isFinite(o.p)||o.p<min||o.p>max) continue;
+      const py=y(o.p);
+      ctx.save();ctx.strokeStyle=o.col;ctx.globalAlpha=.85;ctx.lineWidth=1.5;ctx.setLineDash([10,6]);
+      ctx.beginPath();ctx.moveTo(left,py);ctx.lineTo(w-right,py);ctx.stroke();
+      ctx.restore();
+      ctx.fillStyle="rgba(13,19,26,.86)";ctx.fillRect(w-right-58,py-13,54,11);
+      ctx.fillStyle=o.col;ctx.textAlign="right";ctx.fillText(o.label+" "+fmt(o.p),w-right-5,py-7);
+    }
+  }
+
   // Session-start markers: low-opacity dotted vertical lines.
   const sessionStarts=[
     {mins:1020,col:"#f2c94c"}, // Asia 17:00 PT
@@ -307,7 +327,7 @@ function drawChart(data){
     ctx.fillText(tag,left+cw*.20,Math.min(y1,y2)-5);
   }
 
-  // Active 5m order blocks. Only nearest/highest-scoring blocks are returned by the server.
+  // Active 15m order blocks overlaid on the 5m execution chart.
   for(const ob of (data.orderBlocks||[])){
     const lo=+ob.low,hi=+ob.high;
     if(hi<min||lo>max) continue;
@@ -321,7 +341,7 @@ function drawChart(data){
     ctx.strokeStyle=edge;ctx.globalAlpha=.8;ctx.setLineDash([4,4]);
     ctx.strokeRect(x1,Math.min(yy1,yy2),(w-right)-x1,Math.abs(yy2-yy1));
     ctx.setLineDash([]);ctx.globalAlpha=1;
-    const tag="OB "+ob.score;
+    const tag="15m OB "+ob.score;
     ctx.font="bold 9px -apple-system,BlinkMacSystemFont,Segoe UI,Arial";
     ctx.textAlign="left";
     // Put the score about two chart bars inside the OB rectangle.
@@ -433,6 +453,7 @@ function renderAnalysis(data){
       '<div class="setupLine"><b>Trigger:</b> '+x.trigger+'</div>'+
       '<div class="setupLine"><b>Invalidation:</b> '+x.invalidation+'</div>'+
       '<div class="setupLine"><b>Target:</b> '+x.target+'</div>'+
+      (x.context?'<div class="setupLine"><b>Context:</b> '+x.context+'</div>':'')+
     '</div>';
   }).join("")||'<div class="reason">No qualified setup right now. Wait for price to interact with a major level, trap, or order block.</div>';
   document.getElementById("analysisNote").textContent=a.note||"Conditional setups only; wait for confirmation.";
