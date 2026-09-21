@@ -295,12 +295,15 @@ function drawChart(data){
     const tag="OB "+ob.score;
     ctx.font="bold 9px -apple-system,BlinkMacSystemFont,Segoe UI,Arial";
     ctx.textAlign="left";
-    const tagX=Math.min(w-right-34,x1+4);
-    const tagY=Math.max(top+10,Math.min(yy1,yy2)+10);
+    // Put the score about two chart bars inside the OB rectangle.
+    const barStep=cw/bars.length;
+    const tagX=Math.min(w-right-40,x1+barStep*2);
+    const zoneTop=Math.min(yy1,yy2), zoneBottom=Math.max(yy1,yy2);
+    const tagY=Math.min(zoneBottom-3,Math.max(zoneTop+10,zoneTop+(zoneBottom-zoneTop)/2+3));
     const tw=ctx.measureText(tag).width+7;
-    ctx.fillStyle="rgba(13,19,26,.92)";
-    ctx.fillRect(tagX-3,tagY-8,tw,12);
-    ctx.fillStyle=bullish?"rgba(49,196,141,.98)":"rgba(240,101,101,.98)";
+    ctx.fillStyle="rgba(13,19,26,.72)";
+    ctx.fillRect(tagX-3,tagY-9,tw,12);
+    ctx.fillStyle=bullish?"rgba(49,196,141,1)":"rgba(240,101,101,1)";
     ctx.fillText(tag,tagX,tagY-2);
   }
 
