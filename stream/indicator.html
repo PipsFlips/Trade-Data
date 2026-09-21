@@ -24,10 +24,10 @@ body{padding:env(safe-area-inset-top) env(safe-area-inset-right) calc(14px + env
 .signal .s{font-weight:800;font-size:18px}
 .signal .score{font-size:11px;color:var(--muted);margin-top:2px}
 .buy{color:var(--green)} .sell{color:var(--red)} .neutral{color:var(--amber)}
-.grid{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:7px;margin-bottom:9px}
-.card{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:8px 9px;min-width:0}
-.card .k{font-size:10px;color:var(--muted);text-transform:uppercase;letter-spacing:.06em}
-.card .v{font-size:15px;font-weight:700;margin-top:3px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.grid{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:4px;margin-bottom:7px}
+.card{background:var(--panel);border:1px solid var(--line);border-radius:8px;padding:4px 5px;min-width:0;text-align:center}
+.card .k{font-size:8px;line-height:1.05;color:var(--muted);text-transform:uppercase;letter-spacing:.03em;white-space:nowrap}
+.card .v{font-size:13px;line-height:1.05;font-weight:700;margin-top:2px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .chartCard{background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:8px;margin-bottom:9px}
 .chartHead{display:flex;justify-content:space-between;align-items:center;margin-bottom:5px}
 .chartTitle{font-size:13px;font-weight:700}
@@ -60,7 +60,7 @@ canvas{display:block;width:100%;height:410px;border-radius:8px;background:#0d131
 @media (max-width:600px){
   .wrap{padding:8px}
   .price{font-size:25px}
-  .grid{grid-template-columns:repeat(2,minmax(0,1fr))}
+  .grid{grid-template-columns:repeat(4,minmax(0,1fr));gap:3px}
   canvas{height:350px}
   .rows{grid-template-columns:1fr}
 }
@@ -82,10 +82,10 @@ canvas{display:block;width:100%;height:410px;border-radius:8px;background:#0d131
   </div>
 
   <div class="grid">
-    <div class="card"><div class="k">1m Delta</div><div class="v" id="delta1">—</div></div>
-    <div class="card"><div class="k">5m Delta</div><div class="v" id="delta5">—</div></div>
-    <div class="card"><div class="k">Session CVD 15:00+</div><div class="v" id="sessionCvd">—</div></div>
-    <div class="card"><div class="k">NY CVD 06:30+</div><div class="v" id="cvd">—</div></div>
+    <div class="card"><div class="k">1m Δ</div><div class="v" id="delta1">—</div></div>
+    <div class="card"><div class="k">5m Δ</div><div class="v" id="delta5">—</div></div>
+    <div class="card"><div class="k">Session CVD</div><div class="v" id="sessionCvd">—</div></div>
+    <div class="card"><div class="k">NY CVD</div><div class="v" id="cvd">—</div></div>
   </div>
 
   <div class="section" id="analysisBox">
@@ -140,6 +140,11 @@ canvas{display:block;width:100%;height:410px;border-radius:8px;background:#0d131
   <div class="section">
     <h3>Confirmed traps</h3>
     <div class="rows" id="traps"></div>
+  </div>
+
+  <div class="section">
+    <h3>Open gaps</h3>
+    <div class="rows" id="gaps"></div>
   </div>
 
   <div class="status" id="status">Connecting…</div>
@@ -453,6 +458,17 @@ function trapRows(data){
   el.innerHTML=ts.map(t=>'<div class="row"><span><i class="dot '+(t.side==="BUY"?"buy":"sell")+'"></i>'+t.type+' · '+t.label+'</span><b>'+fmt(t.level)+'</b></div>').join("")||'<div class="reason">No confirmed traps in the recent window.</div>';
 }
 
+function renderGaps(data){
+  const el=document.getElementById("gaps");
+  const xs=(data.gaps||[]).slice(0,6);
+  el.innerHTML=xs.map(g=>{
+    const cls=g.fillDirection==="BUY"?"buy":"sell";
+    const near=g.near?" · NEAR":"";
+    return '<div class="row"><span><i class="dot '+cls+'"></i>'+g.label+' '+g.direction+' · '+g.size.toFixed(2)+' pts'+near+'</span>'+
+      '<b class="'+cls+'">'+fmt(g.low)+'–'+fmt(g.high)+'</b></div>';
+  }).join("")||'<div class="reason">No active unfilled session/RTH gaps detected.</div>';
+}
+
 function renderIcebergs(data){
   const el=document.getElementById("icebergs");
   const xs=(data.icebergs||[]).slice(0,3);
@@ -539,7 +555,7 @@ async function refresh(){
     se.textContent=sig;se.className="s "+(sig==="BUY"?"buy":sig==="SELL"?"sell":"neutral");
     document.getElementById("score").textContent=(d.signal?.score||0)+"/100";
     document.getElementById("reason").textContent=(d.signal?.reasons||[]).join(" • ")||"No confirmed trap signal yet.";
-    renderAnalysis(d);renderIcebergs(d);nearestLevels(d);trapRows(d);drawChart(d);
+    renderAnalysis(d);renderIcebergs(d);nearestLevels(d);trapRows(d);renderGaps(d);drawChart(d);
     status.textContent=(d.connected?"Live feed connected":"Feed reconnecting")+" · auto refresh 2s";
   }catch(e){
     status.textContent="Indicator error: "+e.message;
