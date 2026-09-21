@@ -48,6 +48,60 @@ let lastTradeReceivedAt=null,lastQuoteReceivedAt=null,lastDepthReceivedAt=null;
 let lastRecoveryAt=0;
 let collectorStartedAt=new Date().toISOString();
 let recoveryCount=0;
+const icebergTape=new Map();
+const depthBook={ask:new Map(),bid:new Map()};
+function pxKey(p){return (Math.round((+p)*4)/4).toFixed(2);}
+function pruneIcebergTape(){
+  const cutoff=Date.now()-30000;
+  for(const [k,x] of icebergTape) if((x.lastAt||0)<cutoff) icebergTape.delete(k);
+}
+function recordIcebergTrade(d){
+  const p=+d.price,v=+d.volume||0,t=+d.type;
+  if(!Number.isFinite(p)||v<=0||(t!==0&&t!==1)) return;
+  const k=pxKey(p);
+  const now=Date.now();
+  let x=icebergTape.get(k)||{price:+k,buyVol:0,sellVol:0,buyTrades:0,sellTrades:0,askRefresh:0,bidRefresh:0,firstAt:now,lastAt:now};
+  if(now-x.firstAt>30000){x={price:+k,buyVol:0,sellVol:0,buyTrades:0,sellTrades:0,askRefresh:0,bidRefresh:0,firstAt:now,lastAt:now};}
+  if(t===0){x.buyVol+=v;x.buyTrades++;}else{x.sellVol+=v;x.sellTrades++;}
+  x.lastAt=now;icebergTape.set(k,x);pruneIcebergTape();
+}
+function recordDepth(row){
+  const p=+row?.price;
+  if(!Number.isFinite(p)) return;
+  const type=+row.type;
+  const side=(type===1||type===3||type===10)?"ask":(type===2||type===4||type===9)?"bid":null;
+  if(!side) return;
+  const cur=Number.isFinite(+row.currentVolume)?+row.currentVolume:(Number.isFinite(+row.volume)?+row.volume:null);
+  if(!Number.isFinite(cur)) return;
+  const k=pxKey(p),book=depthBook[side],prev=book.get(k);
+  book.set(k,{currentVolume:cur,at:Date.now()});
+  if(prev && cur>prev.currentVolume){
+    const x=icebergTape.get(k);
+    if(x && Date.now()-x.lastAt<=15000){
+      if(side==="ask") x.askRefresh++;
+      else x.bidRefresh++;
+      icebergTape.set(k,x);
+    }
+  }
+}
+function detectedIcebergs(){
+  pruneIcebergTape();
+  const now=Date.now(),out=[];
+  for(const x of icebergTape.values()){
+    const age=(now-x.lastAt)/1000;
+    // Passive seller absorbing aggressive buys = bearish candidate.
+    if(x.buyVol>=12 && x.buyTrades>=4 && x.askRefresh>=2){
+      const score=Math.min(100,35+Math.min(30,x.buyVol)+Math.min(20,x.askRefresh*5)+Math.min(15,x.buyTrades*2));
+      out.push({side:"SELL",type:"sell-iceberg",price:x.price,score,aggressorVolume:x.buyVol,refreshes:x.askRefresh,trades:x.buyTrades,ageSec:+age.toFixed(1)});
+    }
+    // Passive buyer absorbing aggressive sells = bullish candidate.
+    if(x.sellVol>=12 && x.sellTrades>=4 && x.bidRefresh>=2){
+      const score=Math.min(100,35+Math.min(30,x.sellVol)+Math.min(20,x.bidRefresh*5)+Math.min(15,x.sellTrades*2));
+      out.push({side:"BUY",type:"buy-iceberg",price:x.price,score,aggressorVolume:x.sellVol,refreshes:x.bidRefresh,trades:x.sellTrades,ageSec:+age.toFixed(1)});
+    }
+  }
+  return out.sort((a,b)=>b.score-a.score||a.ageSec-b.ageSec).slice(0,4);
+}
 function saveState(){
   try{
     const tmp=STATE_FILE+".tmp";
@@ -134,7 +188,7 @@ function addTrade(d){
   const ts=d.timestamp||new Date().toISOString(),p=+d.price,v=+d.volume||0,t=+d.type;
   if(!Number.isFinite(p)||v<=0)return;
   ensureSessions(ts);
-  latestPrice=p;lastTradeTs=ts;
+  latestPrice=p;lastTradeTs=ts;recordIcebergTrade(d);
   updateBucket(oneMin,ts,d,1);updateBucket(fiveMin,ts,d,5);
   if(t===0)sessionBuy+=v; else if(t===1)sessionSell+=v;
   sessionPV+=p*v;sessionVol+=v;updateProfile(sessionProfile,p,v,t);
@@ -169,7 +223,8 @@ async function sendRelay(){
     collector:{
       startedAt:collectorStartedAt,
       recoveryCount
-    }
+    },
+    icebergs:detectedIcebergs()
   };
   const r=await fetch(RELAY_URL,{method:"POST",headers:{"Content-Type":"application/json","Authorization":"Bearer "+RELAY_TOKEN},body:JSON.stringify(body)});
   if(!r.ok) throw new Error("relay "+r.status+" "+await r.text());
@@ -204,8 +259,10 @@ async function sendRelay(){
     for(const row of rows) addTrade(row);
   });
   conn.on("GatewayDepth",(id,x)=>{
-    d+=Array.isArray(x)?x.length:1;
+    const rows=Array.isArray(x)?x:[x];
+    d+=rows.length;
     lastDepthReceivedAt=new Date().toISOString();
+    for(const row of rows) recordDepth(row);
   });
 
   conn.onreconnected(async()=>{
