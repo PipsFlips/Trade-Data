@@ -1048,7 +1048,8 @@ function buildIndicatorPayload() {
       currentGlobexDelta:relayFresh?relayState.currentGlobexDelta:(globexExact?.delta??null),
       currentRthDelta:relayFresh?relayState.currentRthDelta:(rthExact?.delta??null),
       currentGlobexCvd:relayFresh?relayState.currentGlobexCvd:(globexExact?.cvd??null),
-      currentRthCvd:relayFresh?relayState.currentRthCvd:(rthExact?.cvd??null)
+      currentRthCvd:relayFresh?relayState.currentRthCvd:(rthExact?.cvd??null),
+      lastTradeAt:relayFresh?(relayState.lastTradeAt||null):(lastTradeAt||null)
     },
     levels:levels.slice(0,18),
     trapCandidates:{buyer:candidateHighs,seller:candidateLows},
@@ -1058,7 +1059,7 @@ function buildIndicatorPayload() {
     signal,
     analysis,
     volatility:{atr5m20:current5mAtr(latestSnapshot.bars?.fiveMinRecent||[],20),atr14Daily:latestSnapshot.analytics?.volatility?.ATR14Daily??null},
-    diagnostics:{tradeEventsReceived,tradeEventsMatched,quoteEventsReceived,depthEventsReceived,lastRawTradeEvent,lastRawQuoteEvent,lastRawDepthEvent,reconnectCount,subscriptionResults,relayFresh:Boolean(relayFresh),relayReceivedAt:relayState?.receivedAt||null,alertScoreThreshold:ALERT_SCORE_THRESHOLD,smsConfigured:Boolean(ALERT_SMS_TO&&TWILIO_ACCOUNT_SID&&TWILIO_AUTH_TOKEN&&TWILIO_FROM_NUMBER)},
+    diagnostics:{tradeEventsReceived,tradeEventsMatched,quoteEventsReceived,depthEventsReceived,lastRawTradeEvent,lastRawQuoteEvent,lastRawDepthEvent,reconnectCount,subscriptionResults,relayFresh:Boolean(relayFresh),relayReceivedAt:relayState?.receivedAt||null,lastTradeAt:relayState?.lastTradeAt||lastTradeAt||null,alertScoreThreshold:ALERT_SCORE_THRESHOLD,smsConfigured:Boolean(ALERT_SMS_TO&&TWILIO_ACCOUNT_SID&&TWILIO_AUTH_TOKEN&&TWILIO_FROM_NUMBER)},
     profiles:{currentGlobex:globexExact,currentRTH:rthExact},
     bars5m:(latestSnapshot.bars?.fiveMinRecent||[]).slice(-400)
   };
