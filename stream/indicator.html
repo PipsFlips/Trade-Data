@@ -103,15 +103,18 @@ canvas{display:block;width:100%;height:410px;border-radius:8px;background:#0d131
 
   <div class="chartCard">
     <div class="chartHead">
-      <div class="chartTitle">5-minute structure + live levels</div>
+      <div class="chartTitle" id="chartTitle">5-minute structure + live levels</div>
       <div class="chartHint"><span id="windowLabel">4h rolling</span> • auto-refresh</div>
     </div>
     <div style="display:flex;gap:6px;margin:0 0 7px 0;flex-wrap:wrap">
-      <button class="winbtn" data-bars="12">1h</button>
-      <button class="winbtn" data-bars="24">2h</button>
-      <button class="winbtn active" data-bars="48">4h</button>
-      <button class="winbtn" data-bars="72">6h</button>
-      <button class="winbtn" data-bars="96">8h</button>
+      <button class="winbtn" data-mode="intraday" data-bars="12">1h</button>
+      <button class="winbtn" data-mode="intraday" data-bars="24">2h</button>
+      <button class="winbtn active" data-mode="intraday" data-bars="48">4h</button>
+      <button class="winbtn" data-mode="intraday" data-bars="72">6h</button>
+      <button class="winbtn" data-mode="intraday" data-bars="96">8h</button>
+      <button class="winbtn" data-mode="1d">1D</button>
+      <button class="winbtn" data-mode="1w">1W</button>
+      <button class="winbtn" data-mode="1m">1M</button>
     </div>
     <div id="layerControls" style="display:flex;gap:4px;margin:0 0 7px 0;flex-wrap:wrap">
       <button class="layerbtn active" data-layer="sessions">Sessions</button>
@@ -278,6 +281,12 @@ canvas{display:block;width:100%;height:410px;border-radius:8px;background:#0d131
         </div>
       </details>
       <details>
+        <summary>Chart time ranges: 1h–8h / 1D / 1W / 1M</summary>
+        <div class="legendBody">
+          The short views (1h–8h) use live 5-minute candles. <b>1D</b> uses the most recent 24 hours of 5-minute candles. <b>1W</b> uses hourly candles for the most recent week. <b>1M</b> uses daily candles for roughly the last 30 trading/calendar days available. Horizontal market levels remain available on all views; intraday-only overlays such as session VWAP curves, session-start markers, and the 5m delta histogram are suppressed on the higher-timeframe views to keep them readable.
+        </div>
+      </details>
+      <details>
         <summary>ATR5 and proximity filters</summary>
         <div class="legendBody">
           <b>ATR5</b> is the recent average true range of 5-minute bars and is used to scale distance filters to current volatility. Proximity filters prevent stale recommendations from remaining active when price is far from the relevant level. OB, ORB, major-level, and gap setups each use separate capped ATR-based distance rules.
@@ -341,6 +350,7 @@ const levelColor=l=>{
   return m[l.id]||colorForKind(l.kind);
 };
 let chartBarCount=48;
+let chartMode="intraday";
 let lastData=null;
 const defaultChartLayers={sessions:true,prior:true,profiles:true,pivots:true,ob:true,orb:true,vwap:true,traps:true};
 let chartLayers={...defaultChartLayers};
@@ -404,9 +414,17 @@ function drawChart(data){
   ctx.clearRect(0,0,w,h);
   ctx.fillStyle="#0d131a"; ctx.fillRect(0,0,w,h);
 
-  const allBars=(data.bars5m||[]);
-  const bars=allBars.slice(-chartBarCount);
-  if(!bars.length){ctx.fillStyle="#8f9baa";ctx.fillText("Waiting for 5m bars…",12,22);return;}
+  let allBars=[],bars=[],barKind="5m";
+  if(chartMode==="1w"){
+    allBars=(data.bars1h||[]); bars=allBars.slice(-168); barKind="1h";
+  }else if(chartMode==="1m"){
+    allBars=(data.bars1d||[]); bars=allBars.slice(-30); barKind="1d";
+  }else{
+    allBars=(data.bars5m||[]);
+    bars=allBars.slice(-(chartMode==="1d"?288:chartBarCount));
+    barKind="5m";
+  }
+  if(!bars.length){ctx.fillStyle="#8f9baa";ctx.fillText("Waiting for "+barKind+" bars…",12,22);return;}
 
   let min=Math.min(...bars.map(b=>+b.l));
   let max=Math.max(...bars.map(b=>+b.h));
@@ -479,7 +497,7 @@ function drawChart(data){
     {mins:0,col:"#57a4ff"},    // London 00:00 PT
     {mins:390,col:"#ffffff"}   // NY 06:30 PT
   ];
-  if(chartLayers.sessions!==false) for(let i=0;i<bars.length;i++){
+  if(barKind==="5m" && chartLayers.sessions!==false) for(let i=0;i<bars.length;i++){
     const mins=ptParts(bars[i].t).mins;
     const mark=sessionStarts.find(z=>z.mins===mins);
     if(!mark) continue;
@@ -602,7 +620,7 @@ function drawChart(data){
       ctx.restore();
     }
   }
-  if(chartLayers.vwap!==false){
+  if(barKind==="5m" && chartLayers.vwap!==false){
     drawVwap(sessionSeries,"#ffffff","Session VWAP");
     drawVwap(nySeries,"#f2c94c","NY VWAP");
   }
@@ -611,23 +629,30 @@ function drawChart(data){
   const axisY=top+ch+18;
   ctx.strokeStyle="#334052";ctx.beginPath();ctx.moveTo(left,axisY-8);ctx.lineTo(w-right,axisY-8);ctx.stroke();
   let step=12;
-  if(chartBarCount<=12) step=3;
+  if(chartMode==="1m") step=5;
+  else if(chartMode==="1w") step=24;
+  else if(chartMode==="1d") step=36;
+  else if(chartBarCount<=12) step=3;
   else if(chartBarCount<=24) step=6;
   else if(chartBarCount>=96) step=24;
   else if(w>=520) step=6;
   ctx.font="9px -apple-system,BlinkMacSystemFont,Segoe UI,Arial";
   ctx.textAlign="center";ctx.fillStyle="#7f8da0";
+  const axisLabel=d=>{
+    if(chartMode==="1m") return d.toLocaleDateString([],{month:"short",day:"numeric",timeZone:"America/Los_Angeles"});
+    if(chartMode==="1w") return d.toLocaleDateString([],{weekday:"short",month:"numeric",day:"numeric",timeZone:"America/Los_Angeles"});
+    return d.toLocaleTimeString([],{hour:"numeric",minute:"2-digit",timeZone:"America/Los_Angeles"});
+  };
   for(let i=0;i<bars.length;i+=step){
     const d=new Date(bars[i].t);
-    const label=d.toLocaleTimeString([],{hour:"numeric",minute:"2-digit",timeZone:"America/Los_Angeles"});
-    ctx.fillText(label,x(i),axisY+3);
+    ctx.fillText(axisLabel(d),x(i),axisY+3);
   }
   const lastIdx=bars.length-1;
   const ld=new Date(bars[lastIdx].t);
-  ctx.fillText(ld.toLocaleTimeString([],{hour:"numeric",minute:"2-digit",timeZone:"America/Los_Angeles"}),x(lastIdx),axisY+3);
+  ctx.fillText(axisLabel(ld),x(lastIdx),axisY+3);
 
   // 5m delta histogram.
-  const flow=(data.flow?.fiveMin||[]).slice(-bars.length);
+  const flow=chartMode==="intraday"?(data.flow?.fiveMin||[]).slice(-bars.length):[];
   if(flow.length){
     const dmax=Math.max(1,...flow.map(b=>Math.abs(+b.delta||0)));
     const base=h-18,dh=18;
@@ -767,9 +792,13 @@ async function refresh(){
   }
 }
 document.querySelectorAll(".winbtn").forEach(btn=>btn.addEventListener("click",()=>{
-  chartBarCount=+btn.dataset.bars;
+  chartMode=btn.dataset.mode||"intraday";
+  if(chartMode==="intraday") chartBarCount=+btn.dataset.bars;
   document.querySelectorAll(".winbtn").forEach(b=>b.classList.toggle("active",b===btn));
-  document.getElementById("windowLabel").textContent=(chartBarCount/12)+"h rolling";
+  const labels={intraday:(chartBarCount/12)+"h rolling","1d":"1 day","1w":"1 week","1m":"1 month"};
+  const titles={intraday:"5-minute structure + live levels","1d":"1-day structure + live levels","1w":"1-week structure + live levels","1m":"1-month structure + live levels"};
+  document.getElementById("windowLabel").textContent=labels[chartMode];
+  document.getElementById("chartTitle").textContent=titles[chartMode];
   if(lastData) drawChart(lastData);
 }));
 document.querySelectorAll(".layerbtn").forEach(btn=>{
