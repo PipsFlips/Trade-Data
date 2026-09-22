@@ -2,6 +2,7 @@ const signalR = require("@microsoft/signalr");
 const { DateTime } = require("luxon");
 const fs = require("fs");
 const path = require("path");
+const os = require("os");
 
 const API_BASE = process.env.TOPSTEP_API_BASE || "https://api.topstepx.com";
 const HUB = process.env.TOPSTEP_MARKET_HUB || "https://rtc.topstepx.com/hubs/market";
@@ -11,7 +12,8 @@ const LIVE = String(process.env.TOPSTEP_LIVE_DATA || "false").toLowerCase()==="t
 const RELAY_URL = process.env.RELAY_URL || "https://trade-data-production.up.railway.app/realtime-relay";
 const RELAY_TOKEN = process.env.REALTIME_RELAY_TOKEN;
 const ZONE="America/Los_Angeles";
-const STATE_FILE=process.env.COLLECTOR_STATE_FILE||path.join(__dirname,"collector-state.json");
+const LEGACY_STATE_FILE=path.join(__dirname,"collector-state.json");
+const STATE_FILE=process.env.COLLECTOR_STATE_FILE||path.join(os.homedir(),".mnq-collector-state.json");
 const STATE_SAVE_MS=30000;
 const TOKEN_REFRESH_MS=18*60*60*1000;
 
@@ -102,8 +104,23 @@ function detectedIcebergs(){
   }
   return out.sort((a,b)=>b.score-a.score||a.ageSec-b.ageSec).slice(0,4);
 }
+function pruneFlowStores(){
+  const now=Date.now();
+  const cut1=now-8*60*60*1000;
+  const cut5=now-18*60*60*1000;
+  for(const k of Object.keys(oneMin)) if(Date.parse(oneMin[k]?.t||k)<cut1) delete oneMin[k];
+  for(const k of Object.keys(fiveMin)) if(Date.parse(fiveMin[k]?.t||k)<cut5) delete fiveMin[k];
+}
+function pruneDepthBook(){
+  const cut=Date.now()-60000;
+  for(const book of [depthBook.ask,depthBook.bid]){
+    for(const [k,x] of book) if((x?.at||0)<cut) book.delete(k);
+  }
+}
 function saveState(){
   try{
+    pruneFlowStores();
+    pruneDepthBook();
     const tmp=STATE_FILE+".tmp";
     fs.writeFileSync(tmp,JSON.stringify({
       savedAt:new Date().toISOString(),sessionKey,rthDate,
@@ -115,8 +132,10 @@ function saveState(){
 }
 function loadState(){
   try{
-    if(!fs.existsSync(STATE_FILE)) return;
-    const x=JSON.parse(fs.readFileSync(STATE_FILE,"utf8"));
+    let source=STATE_FILE;
+    if(!fs.existsSync(source) && fs.existsSync(LEGACY_STATE_FILE)) source=LEGACY_STATE_FILE;
+    if(!fs.existsSync(source)) return;
+    const x=JSON.parse(fs.readFileSync(source,"utf8"));
     const now=DateTime.now().setZone(ZONE);
     const expectedSession=(now.hour>=15?now.plus({days:1}):now).toISODate();
     const expectedRth=now.toISODate();
@@ -137,7 +156,10 @@ function loadState(){
       rthPV=+x.rthPV||0;rthVol=+x.rthVol||0;
       rthProfile=x.rthProfile||{};
     }
-    console.log("STATE_LOADED",{session:sessionKey,rth:rthDate,lastTrade:lastTradeTs});
+    console.log("STATE_LOADED",{source,session:sessionKey,rth:rthDate,lastTrade:lastTradeTs});
+    if(source===LEGACY_STATE_FILE && STATE_FILE!==LEGACY_STATE_FILE){
+      try{saveState();console.log("STATE_MIGRATED",STATE_FILE);}catch{}
+    }
   }catch(e){console.error("STATE_LOAD_ERR",e.message);}
 }
 function pt(ts){return DateTime.fromISO(ts,{setZone:true}).setZone(ZONE);}
@@ -333,6 +355,7 @@ async function sendRelay(){
 
   setInterval(()=>sendRelay().catch(e=>console.error("RELAY_ERR",e.message)),2000);
   setInterval(saveState,STATE_SAVE_MS);
+  setInterval(()=>{pruneFlowStores();pruneDepthBook();},5*60*1000);
   setInterval(()=>console.log("COUNTS",{quotes:q,trades:t,depth:d,price:latestPrice,sessionCvd:sessionBuy-sessionSell,rthCvd:rthBuy-rthSell,tradeAgeSec:lastTradeReceivedAt?Math.round((Date.now()-Date.parse(lastTradeReceivedAt))/1000):null,recoveries:recoveryCount}),60000);
   process.on("SIGTERM",()=>{saveState();process.exit(0);});
   process.on("SIGINT",()=>{saveState();process.exit(0);});
