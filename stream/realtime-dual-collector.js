@@ -147,9 +147,36 @@ function saveState(){
   try{for(const st of Object.values(states))prune(st);const tmp=STATE_FILE+".tmp";fs.writeFileSync(tmp,JSON.stringify({savedAt:new Date().toISOString(),states:{MNQ:serializable(states.MNQ),MES:serializable(states.MES)}}));fs.renameSync(tmp,STATE_FILE);}catch(e){console.error("STATE_SAVE_ERR",e.message);}
 }
 function loadState(){
-  try{if(!fs.existsSync(STATE_FILE))return;const x=JSON.parse(fs.readFileSync(STATE_FILE,"utf8"));
-    for(const sym of ["MNQ","MES"]){if(x.states?.[sym])Object.assign(states[sym],x.states[sym]);}
-    console.log("STATE_LOADED",STATE_FILE);
+  try{
+    if(fs.existsSync(STATE_FILE)){
+      const x=JSON.parse(fs.readFileSync(STATE_FILE,"utf8"));
+      for(const sym of ["MNQ","MES"]){if(x.states?.[sym])Object.assign(states[sym],x.states[sym]);}
+      console.log("STATE_LOADED",STATE_FILE);
+      return;
+    }
+
+    // One-time migration from the prior single-symbol MNQ collector.
+    // Prefer the hardened home-directory state, then fall back to the legacy repo-local file.
+    const legacyCandidates=[
+      path.join(os.homedir(),".mnq-collector-state.json"),
+      path.join(os.homedir(),"Trade-Data-main","stream","collector-state.json")
+    ];
+    const legacyPath=legacyCandidates.find(p=>fs.existsSync(p));
+    if(!legacyPath) return;
+
+    const x=JSON.parse(fs.readFileSync(legacyPath,"utf8"));
+    const mnq=states.MNQ;
+    for(const k of ["sessionKey","rthDate","sessionBuy","sessionSell","rthBuy","rthSell","sessionPV","sessionVol","rthPV","rthVol","lastTradeTs","latestPrice"]){
+      if(x[k]!==undefined&&x[k]!==null) mnq[k]=x[k];
+    }
+    if(x.sessionProfile) mnq.sessionProfile=x.sessionProfile;
+    if(x.rthProfile) mnq.rthProfile=x.rthProfile;
+    if(x.oneMin) mnq.oneMin=x.oneMin;
+    if(x.fiveMin) mnq.fiveMin=x.fiveMin;
+
+    console.log("LEGACY_MNQ_STATE_LOADED",legacyPath);
+    saveState();
+    console.log("DUAL_STATE_MIGRATED",STATE_FILE);
   }catch(e){console.error("STATE_LOAD_ERR",e.message);}
 }
 async function findContract(symbol){
