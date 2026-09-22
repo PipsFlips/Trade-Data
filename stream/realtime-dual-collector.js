@@ -33,7 +33,7 @@ function freshState(symbol){
     sessionPV:0,sessionVol:0,rthPV:0,rthVol:0,
     sessionKey:null,rthDate:null,lastTradeTs:null,
     lastTradeReceivedAt:null,lastQuoteReceivedAt:null,lastDepthReceivedAt:null,
-    icebergTape:{},depthAsk:{},depthBid:{}
+    icebergTape:{},depthAsk:{},depthBid:{},liquidityEvents:[]
   };
 }
 const states={MNQ:freshState("MNQ"),MES:freshState("MES")};
@@ -104,11 +104,35 @@ function recordDepth(st,row){
   const type=+row.type,side=(type===1||type===3||type===10)?"ask":(type===2||type===4||type===9)?"bid":null;
   if(!side)return;
   const cur=Number.isFinite(+row.currentVolume)?+row.currentVolume:(Number.isFinite(+row.volume)?+row.volume:null);if(!Number.isFinite(cur))return;
-  const k=pxKey(p),book=side==="ask"?st.depthAsk:st.depthBid,prev=book[k];book[k]={currentVolume:cur,at:Date.now()};
+  const k=pxKey(p),book=side==="ask"?st.depthAsk:st.depthBid,now=Date.now(),prev=book[k];
+  const next={
+    currentVolume:Math.max(0,cur),at:now,
+    firstSeenAt:prev?.firstSeenAt||now,
+    peakVolume:Math.max(prev?.peakVolume||0,Math.max(0,cur)),
+    refreshCount:prev?.refreshCount||0,
+    lastIncreaseAt:prev?.lastIncreaseAt||0,
+    lastDecreaseAt:prev?.lastDecreaseAt||0
+  };
   if(prev&&cur>prev.currentVolume){
+    next.refreshCount++;
+    next.lastIncreaseAt=now;
     const x=st.icebergTape[k];
-    if(x&&Date.now()-x.lastAt<=15000){if(side==="ask")x.askRefresh++;else x.bidRefresh++;st.icebergTape[k]=x;}
+    if(x&&now-x.lastAt<=15000){if(side==="ask")x.askRefresh++;else x.bidRefresh++;st.icebergTape[k]=x;}
   }
+  if(prev&&cur<prev.currentVolume){
+    next.lastDecreaseAt=now;
+    const drop=prev.currentVolume-cur;
+    const tape=st.icebergTape[k],recentTrade=Boolean(tape&&now-tape.lastAt<=3000);
+    if(prev.currentVolume>=20 && (cur<=0 || drop>=Math.max(10,prev.currentVolume*.5))){
+      st.liquidityEvents=Array.isArray(st.liquidityEvents)?st.liquidityEvents:[];
+      st.liquidityEvents.unshift({
+        side:side==="bid"?"BID":"ASK",price:+k,size:prev.currentVolume,
+        status:recentTrade?"CONSUMED":"PULLED",at:now
+      });
+      st.liquidityEvents=st.liquidityEvents.slice(0,12);
+    }
+  }
+  if(cur<=0) delete book[k]; else book[k]=next;
 }
 function detectedIcebergs(st){
   const now=Date.now(),out=[];
@@ -126,6 +150,41 @@ function detectedIcebergs(st){
   }
   return out.sort((a,b)=>b.score-a.score||a.ageSec-b.ageSec).slice(0,4);
 }
+function detectedRestingLiquidity(st,sym){
+  const now=Date.now(),price=+st.latestPrice;
+  if(!Number.isFinite(price)) return {levels:[],events:[],threshold:null};
+  const maxDistance=sym==="MES"?20:60;
+  const minFloor=sym==="MES"?50:25;
+  const active=[];
+  for(const [side,book] of [["BID",st.depthBid],["ASK",st.depthAsk]]){
+    for(const [k,x] of Object.entries(book||{})){
+      const p=+k,v=+x.currentVolume||0,age=now-(x.at||0);
+      if(!Number.isFinite(p)||v<=0||age>60000||Math.abs(p-price)>maxDistance) continue;
+      active.push({side,price:p,size:v,x});
+    }
+  }
+  const sizes=active.map(x=>x.size).sort((a,b)=>a-b);
+  const med=sizes.length?sizes[Math.floor(sizes.length/2)]:0;
+  const threshold=Math.max(minFloor,Math.round(med*2.5));
+  const levels=active.filter(x=>x.size>=threshold).map(z=>{
+    const tape=st.icebergTape[pxKey(z.price)],recentTrade=Boolean(tape&&now-tape.lastAt<=3000);
+    let status="HOLDING";
+    if(recentTrade && z.x.lastDecreaseAt && now-z.x.lastDecreaseAt<=3500) status="BEING HIT";
+    if(z.x.lastIncreaseAt && now-z.x.lastIncreaseAt<=5000 && z.x.refreshCount>=1) status="REPLENISHING";
+    const persistence=Math.min(15,Math.max(0,(now-(z.x.firstSeenAt||now))/1000)/4);
+    const sizeScore=Math.min(30,(z.size/Math.max(1,threshold))*15);
+    const refreshScore=Math.min(15,(z.x.refreshCount||0)*3);
+    const distancePenalty=Math.min(15,Math.abs(z.price-price)/Math.max(1,maxDistance)*15);
+    const score=Math.max(1,Math.min(100,Math.round(50+sizeScore+persistence+refreshScore-distancePenalty)));
+    return {side:z.side,price:z.price,size:z.size,status,score,refreshes:z.x.refreshCount||0,ageSec:+((now-(z.x.firstSeenAt||now))/1000).toFixed(1)};
+  }).sort((a,b)=>b.score-a.score||b.size-a.size).slice(0,8);
+  st.liquidityEvents=(Array.isArray(st.liquidityEvents)?st.liquidityEvents:[]).filter(e=>now-e.at<=8000);
+  const events=st.liquidityEvents
+    .filter(e=>Math.abs((+e.price||0)-price)<=maxDistance && (+e.size||0)>=Math.max(minFloor,threshold*.7))
+    .slice(0,4)
+    .map(e=>({...e,ageSec:+((now-e.at)/1000).toFixed(1)}));
+  return {levels,events,threshold,medianVisibleSize:med,maxDistance};
+}
 function addTrade(st,d){
   const ts=d.timestamp||new Date().toISOString(),p=+d.price,v=+d.volume||0,t=+d.type;if(!Number.isFinite(p)||v<=0)return;
   ensureSessions(st,ts);st.latestPrice=p;st.lastTradeTs=ts;st.lastTradeReceivedAt=new Date().toISOString();recordIcebergTrade(st,d);
@@ -142,7 +201,7 @@ function prune(st){
   for(const k of Object.keys(st.fiveMin))if(Date.parse(st.fiveMin[k]?.t||k)<cut5)delete st.fiveMin[k];
   for(const b of [st.depthAsk,st.depthBid])for(const [k,x] of Object.entries(b))if((x?.at||0)<cutD)delete b[k];
 }
-function serializable(st){const o={...st};delete o.icebergTape;delete o.depthAsk;delete o.depthBid;return o;}
+function serializable(st){const o={...st};delete o.icebergTape;delete o.depthAsk;delete o.depthBid;delete o.liquidityEvents;return o;}
 function saveState(){
   try{for(const st of Object.values(states))prune(st);const tmp=STATE_FILE+".tmp";fs.writeFileSync(tmp,JSON.stringify({savedAt:new Date().toISOString(),states:{MNQ:serializable(states.MNQ),MES:serializable(states.MES)}}));fs.renameSync(tmp,STATE_FILE);}catch(e){console.error("STATE_SAVE_ERR",e.message);}
 }
@@ -195,7 +254,7 @@ async function relayOne(sym){
     currentGlobexDelta:st.sessionBuy-st.sessionSell,currentRthDelta:rthActive?(st.rthBuy-st.rthSell):null,currentGlobexCvd:st.sessionBuy-st.sessionSell,currentRthCvd:rthActive?(st.rthBuy-st.rthSell):null,
     sessionVwap:st.sessionVol?st.sessionPV/st.sessionVol:null,rthVwap:rthActive&&st.rthVol?st.rthPV/st.rthVol:null,rthActive,
     profiles:{session:finalizeProfile(st.sessionProfile),rth:rthActive?finalizeProfile(st.rthProfile):null},
-    collector:{startedAt:collectorStartedAt,recoveryCount},icebergs:detectedIcebergs(st)};
+    collector:{startedAt:collectorStartedAt,recoveryCount},icebergs:detectedIcebergs(st),restingLiquidity:detectedRestingLiquidity(st,sym)};
   const url=sym==="MNQ"?MNQ_RELAY_URL:MES_RELAY_URL;
   const r=await fetch(url,{method:"POST",headers:{"Content-Type":"application/json","Authorization":"Bearer "+RELAY_TOKEN},body:JSON.stringify(body)});
   if(!r.ok)throw new Error(sym+" relay "+r.status+" "+await r.text());
