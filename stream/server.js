@@ -49,6 +49,8 @@ let subscriptionResults = {quotes:null,trades:null,depth:null};
 let lastSignalAlert = {key:null,at:0};
 let relayState = null;
 let signalStability = {setupKey:null,cvdAlignedSince:null,targetRoomAward:null};
+let actionableSignalState={active:null,pending:null,pendingSince:0,emptySince:0};
+let analysisDisplayState={active:null,pending:null,pendingSince:0};
 const activeViewers=new Map();
 const VIEWER_TTL_MS=45000;
 function activeViewerCount(){
@@ -585,6 +587,77 @@ function currentOrb(five,f5){
   };
 }
 
+function stabilizeAnalysis(raw){
+  const key=(raw?.bias||"NEUTRAL")+"|"+((raw?.setups||[])[0]?.title||"none");
+  const now=Date.now();
+  if(!analysisDisplayState.active){
+    analysisDisplayState.active=raw;
+    analysisDisplayState.pending=null;
+    return raw;
+  }
+  const activeKey=(analysisDisplayState.active?.bias||"NEUTRAL")+"|"+((analysisDisplayState.active?.setups||[])[0]?.title||"none");
+  if(key===activeKey){
+    analysisDisplayState.active=raw;
+    analysisDisplayState.pending=null;
+    return raw;
+  }
+  if(analysisDisplayState.pending?.key!==key){
+    analysisDisplayState.pending={key,raw};
+    analysisDisplayState.pendingSince=now;
+    return analysisDisplayState.active;
+  }
+  analysisDisplayState.pending.raw=raw;
+  if(now-analysisDisplayState.pendingSince>=15000){
+    analysisDisplayState.active=raw;
+    analysisDisplayState.pending=null;
+  }
+  return analysisDisplayState.active;
+}
+
+function stabilizeActionableSignal(candidate){
+  const now=Date.now();
+  if(!candidate || candidate.score<50 || candidate.side==="NEUTRAL"){
+    if(actionableSignalState.active){
+      if(!actionableSignalState.emptySince) actionableSignalState.emptySince=now;
+      if(now-actionableSignalState.emptySince<15000) return actionableSignalState.active;
+    }
+    actionableSignalState={active:null,pending:null,pendingSince:0,emptySince:0};
+    return {side:"NEUTRAL",score:0,reasons:[],components:{}};
+  }
+  actionableSignalState.emptySince=0;
+  const key=candidate.side+"|"+candidate.key;
+  if(actionableSignalState.active?.key===candidate.key && actionableSignalState.active?.side===candidate.side){
+    actionableSignalState.active=candidate;
+    actionableSignalState.pending=null;
+    return candidate;
+  }
+  if(!actionableSignalState.active){
+    if(actionableSignalState.pending?.fullKey!==key){
+      actionableSignalState.pending={...candidate,fullKey:key};
+      actionableSignalState.pendingSince=now;
+      return {side:"NEUTRAL",score:0,reasons:[],components:{}};
+    }
+    actionableSignalState.pending={...candidate,fullKey:key};
+    if(now-actionableSignalState.pendingSince>=12000){
+      actionableSignalState.active=candidate;
+      actionableSignalState.pending=null;
+      return candidate;
+    }
+    return {side:"NEUTRAL",score:0,reasons:[],components:{}};
+  }
+  if(actionableSignalState.pending?.fullKey!==key){
+    actionableSignalState.pending={...candidate,fullKey:key};
+    actionableSignalState.pendingSince=now;
+    return actionableSignalState.active;
+  }
+  actionableSignalState.pending={...candidate,fullKey:key};
+  if(now-actionableSignalState.pendingSince>=12000){
+    actionableSignalState.active=candidate;
+    actionableSignalState.pending=null;
+  }
+  return actionableSignalState.active;
+}
+
 function buildMarketAnalysis({currentPrice,levels,f1,f5,signal,traps,orderBlocks,globexVwap,rthVwap,sessionCvd,atr5,orb,bars5m,delta15,profiles,icebergs,gaps}){
   const closed1=lastClosedBar(f1||[],1);
   const closed5=lastClosedBar(f5||[],5);
@@ -689,7 +762,8 @@ function buildMarketAnalysis({currentPrice,levels,f1,f5,signal,traps,orderBlocks
     })[0];
   if(nearbyOb){
     const dist=currentPrice<+nearbyOb.low?+nearbyOb.low-currentPrice:currentPrice>+nearbyOb.high?currentPrice-+nearbyOb.high:0;
-    if(dist<=atr*.9){
+    const obProximity=Math.min(20,Math.max(8,atr*.9));
+    if(dist<=obProximity){
       const tgt=targetFor(nearbyOb.side,(nearbyOb.low+nearbyOb.high)/2);
       setups.push({
         side:nearbyOb.side,
@@ -710,8 +784,9 @@ function buildMarketAnalysis({currentPrice,levels,f1,f5,signal,traps,orderBlocks
     const volRatio=medVol?liveVol/medVol:null;
     const d=+closed5.delta||0;
     const distHi=Math.abs(currentPrice-+orb.high),distLo=Math.abs(currentPrice-+orb.low);
-    const nearHi=distHi<=atr*.75 || currentPrice>=+orb.high;
-    const nearLo=distLo<=atr*.75 || currentPrice<=+orb.low;
+    const orbProximity=Math.min(25,Math.max(10,atr*.75));
+    const nearHi=distHi<=orbProximity;
+    const nearLo=distLo<=orbProximity;
     const longBias=bias==="BULLISH"||bias==="MIXED";
     const shortBias=bias==="BEARISH"||bias==="MIXED";
 
@@ -772,21 +847,24 @@ function buildMarketAnalysis({currentPrice,levels,f1,f5,signal,traps,orderBlocks
     });
   }
 
-  if((bias==="BULLISH"||bias==="MIXED") && above[0]){
+  const majorProximity=Math.min(30,Math.max(12,atr));
+  if((bias==="BULLISH"||bias==="MIXED") && above[0] && Math.abs(+above[0].price-currentPrice)<=majorProximity){
     const lvl=above[0],tgt=targetFor("BUY",+lvl.price+0.01);
     setups.push({
       side:"BUY",title:"Breakout acceptance above "+lvl.label,
       trigger:"Closed 5m acceptance above "+lvl.label+" "+(+lvl.price).toFixed(2)+" with positive 1m/5m delta.",
       invalidation:"5m close back below "+lvl.label+".",
-      target:tgt?(tgt.label+" "+(+tgt.price).toFixed(2)):"next higher major level",quality:null
+      target:tgt?(tgt.label+" "+(+tgt.price).toFixed(2)):"next higher major level",
+      quality:Math.min(100,45+(closed5&&+closed5.delta>0?15:0)+(Number.isFinite(activeVwap)&&currentPrice>activeVwap?10:0)+(delta15?.direction==="BULLISH"?15:0))
     });
-  } else if((bias==="BEARISH"||bias==="MIXED") && below[0]){
+  } else if((bias==="BEARISH"||bias==="MIXED") && below[0] && Math.abs(currentPrice-+below[0].price)<=majorProximity){
     const lvl=below[0],tgt=targetFor("SELL",+lvl.price-0.01);
     setups.push({
       side:"SELL",title:"Breakdown acceptance below "+lvl.label,
       trigger:"Closed 5m acceptance below "+lvl.label+" "+(+lvl.price).toFixed(2)+" with negative 1m/5m delta.",
       invalidation:"5m close back above "+lvl.label+".",
-      target:tgt?(tgt.label+" "+(+tgt.price).toFixed(2)):"next lower major level",quality:null
+      target:tgt?(tgt.label+" "+(+tgt.price).toFixed(2)):"next lower major level",
+      quality:Math.min(100,45+(closed5&&+closed5.delta<0?15:0)+(Number.isFinite(activeVwap)&&currentPrice<activeVwap?10:0)+(delta15?.direction==="BEARISH"?15:0))
     });
   }
 
@@ -1034,10 +1112,12 @@ function buildIndicatorPayload() {
   const currentGlobexState=profiles[profileKey("globex",currentSession)];
   const currentRthState=profiles[profileKey("rth",today)];
   const relayFreshNow=relayState && Date.now()-Date.parse(relayState.receivedAt)<10000;
+  const nowForRth=nowPT(),rthMins=nowForRth.hour*60+nowForRth.minute;
+  const rthActive=rthMins>=390&&rthMins<780;
   const relayGlobexProfile=relayFreshNow?relayState.profiles?.session:null;
-  const relayRthProfile=relayFreshNow?relayState.profiles?.rth:null;
+  const relayRthProfile=relayFreshNow&&rthActive?relayState.profiles?.rth:null;
   const globexExact=relayGlobexProfile||finalizeProfile(currentGlobexState);
-  const rthExact=relayRthProfile||finalizeProfile(currentRthState);
+  const rthExact=rthActive?(relayRthProfile||finalizeProfile(currentRthState)):null;
   const currentPrice=+(relayFreshNow ? relayState.currentPrice : (latestQuote?.lastPrice ?? latestQuote?.price ?? latestSnapshot.latest?.bar1m?.c ?? latestSnapshot.latest?.bar5m?.c));
   const p=a.profiles||{};
   const levels=uniqueLevels([
@@ -1070,7 +1150,7 @@ function buildIndicatorPayload() {
   const liveBars5m=mergeLiveFiveMinuteBars(latestSnapshot.bars?.fiveMinRecent||[],f5);
   const last5=f5.at(-1)||null;
   const globexVwap=relayFresh && Number.isFinite(+relayState.sessionVwap)?+relayState.sessionVwap:(exactVwapFromState(currentGlobexState) ?? a.vwap?.globex ?? null);
-  const rthVwap=relayFresh && Number.isFinite(+relayState.rthVwap)?+relayState.rthVwap:exactVwapFromState(currentRthState);
+  const rthVwap=rthActive?(relayFresh && Number.isFinite(+relayState.rthVwap)?+relayState.rthVwap:exactVwapFromState(currentRthState)):null;
 
   const candidateHighs=levels.filter(l=>["resistance","profile"].includes(l.kind)&&l.price>=currentPrice-tick*8).slice(0,5);
   const candidateLows=levels.filter(l=>["support","profile"].includes(l.kind)&&l.price<=currentPrice+tick*8).slice(0,5);
@@ -1143,68 +1223,68 @@ function buildIndicatorPayload() {
   }
   traps.sort((x,y)=>Date.parse(y.time)-Date.parse(x.time));
 
-  let signal={side:"NEUTRAL",score:0,reasons:[],components:{}};
+  let trapSignal={side:"NEUTRAL",score:0,reasons:[],components:{}};
   const latestTrap=traps[0];
   if(latestTrap && Date.now()-Date.parse(latestTrap.time)<=20*60000){
-    signal.side=latestTrap.side;
+    trapSignal.side=latestTrap.side;
     const setupKey=[latestTrap.side,latestTrap.type,latestTrap.label,latestTrap.time].join("|");
     if(signalStability.setupKey!==setupKey){
       signalStability={setupKey,cvdAlignedSince:null,targetRoomAward:null};
     }
 
-    signal.score+=25; signal.components.trap=25;
-    signal.reasons.push(latestTrap.type+" at "+latestTrap.label);
+    trapSignal.score+=25; trapSignal.components.trap=25;
+    trapSignal.reasons.push(latestTrap.type+" at "+latestTrap.label);
 
     const last1=lastClosedBar(f1,1);
     const last5=lastClosedBar(f5,5);
     const closed5=lastClosedBar(latestSnapshot.bars?.fiveMinRecent||[],5);
-    const structureOk=closed5 ? (signal.side==="BUY"?+closed5.c>+latestTrap.level:+closed5.c<+latestTrap.level) : false;
+    const structureOk=closed5 ? (trapSignal.side==="BUY"?+closed5.c>+latestTrap.level:+closed5.c<+latestTrap.level) : false;
     if(structureOk){
-      signal.score+=20;signal.components.structure=20;signal.reasons.push("closed 5m structure confirmed");
+      trapSignal.score+=20;trapSignal.components.structure=20;trapSignal.reasons.push("closed 5m structure confirmed");
     }
 
-    if(last1 && (signal.side==="BUY"?+last1.delta>0:+last1.delta<0)){
-      signal.score+=10;signal.components.delta1m=10;signal.reasons.push("closed 1m delta aligned");
+    if(last1 && (trapSignal.side==="BUY"?+last1.delta>0:+last1.delta<0)){
+      trapSignal.score+=10;trapSignal.components.delta1m=10;trapSignal.reasons.push("closed 1m delta aligned");
     }
-    if(last5 && (signal.side==="BUY"?+last5.delta>0:+last5.delta<0)){
-      signal.score+=10;signal.components.delta5m=10;signal.reasons.push("closed 5m delta aligned");
+    if(last5 && (trapSignal.side==="BUY"?+last5.delta>0:+last5.delta<0)){
+      trapSignal.score+=10;trapSignal.components.delta5m=10;trapSignal.reasons.push("closed 5m delta aligned");
     }
 
     const sessionCvd=relayFresh?relayState.currentGlobexCvd:(globexExact?.cvd);
-    const cvdAligned=Number.isFinite(+sessionCvd) && (signal.side==="BUY"?+sessionCvd>0:+sessionCvd<0);
+    const cvdAligned=Number.isFinite(+sessionCvd) && (trapSignal.side==="BUY"?+sessionCvd>0:+sessionCvd<0);
     if(cvdAligned){
       if(!signalStability.cvdAlignedSince) signalStability.cvdAlignedSince=Date.now();
       if(Date.now()-signalStability.cvdAlignedSince>=10000){
-        signal.score+=10;signal.components.cvd=10;signal.reasons.push("session CVD aligned 10s");
+        trapSignal.score+=10;trapSignal.components.cvd=10;trapSignal.reasons.push("session CVD aligned 10s");
       }
     }else{
       signalStability.cvdAlignedSince=null;
     }
 
     const activeVwap=Number.isFinite(+rthVwap)?+rthVwap:+globexVwap;
-    if(Number.isFinite(activeVwap) && (signal.side==="BUY"?currentPrice>activeVwap:currentPrice<activeVwap)){
-      signal.score+=10;signal.components.vwap=10;signal.reasons.push("VWAP aligned");
+    if(Number.isFinite(activeVwap) && (trapSignal.side==="BUY"?currentPrice>activeVwap:currentPrice<activeVwap)){
+      trapSignal.score+=10;trapSignal.components.vwap=10;trapSignal.reasons.push("VWAP aligned");
     }
 
     const trapLevel=levels.find(l=>l.label===latestTrap.label);
     if(trapLevel && trapLevel.priority>=80){
-      signal.score+=10;signal.components.level=10;signal.reasons.push("major level confluence");
+      trapSignal.score+=10;trapSignal.components.level=10;trapSignal.reasons.push("major level confluence");
     }
 
     if(signalStability.targetRoomAward===null){
       const atr5=current5mAtr(latestSnapshot.bars?.fiveMinRecent||[],20)||20;
       const estRisk=Math.max(8,atr5*.25);
-      const targetDist=nearestLevelDistance(levels,currentPrice,signal.side);
+      const targetDist=nearestLevelDistance(levels,currentPrice,trapSignal.side);
       signalStability.targetRoomAward=Boolean(Number.isFinite(targetDist)&&targetDist>=estRisk*1.5);
     }
     if(signalStability.targetRoomAward){
-      signal.score+=5;signal.components.targetRoom=5;signal.reasons.push(">=1.5R target room");
+      trapSignal.score+=5;trapSignal.components.targetRoom=5;trapSignal.reasons.push(">=1.5R target room");
     }
   }else{
     signalStability={setupKey:null,cvdAlignedSince:null,targetRoomAward:null};
   }
-  signal.score=Math.min(100,signal.score);
-  if(signal.score<50) signal.side="NEUTRAL";
+  trapSignal.score=Math.min(100,trapSignal.score);
+  if(trapSignal.score<50) trapSignal.side="NEUTRAL";
 
   const bars5m=liveBars5m;
   const bars15m=aggregateBars(bars5m,15);
@@ -1214,8 +1294,8 @@ function buildIndicatorPayload() {
   );
   const orb=currentOrb(bars5m,f5);
   const gaps=detectOpeningGaps(bars5m,currentPrice,current5mAtr(bars5m,20));
-  const analysis=buildMarketAnalysis({
-    currentPrice,levels,f1,f5,signal,traps,orderBlocks,globexVwap,rthVwap,
+  const rawAnalysis=buildMarketAnalysis({
+    currentPrice,levels,f1,f5,signal:trapSignal,traps,orderBlocks,globexVwap,rthVwap,
     sessionCvd:relayFresh?relayState.currentGlobexCvd:(globexExact?.cvd??null),
     atr5:current5mAtr(bars5m,20),orb,bars5m,
     delta15:deltaTrend15m(f5),
@@ -1223,6 +1303,18 @@ function buildIndicatorPayload() {
     icebergs:relayFresh?(relayState.icebergs||[]):[],
     gaps
   });
+  const analysis=stabilizeAnalysis(rawAnalysis);
+  const bestSetup=(analysis.setups||[])
+    .filter(x=>Number.isFinite(+x.quality))
+    .sort((a,b)=>+b.quality-+a.quality)[0]||null;
+  const candidateSignal=bestSetup?{
+    side:bestSetup.side,
+    score:Math.round(+bestSetup.quality),
+    key:bestSetup.title,
+    reasons:[bestSetup.title,bestSetup.context||bestSetup.trigger].filter(Boolean),
+    components:{setupQuality:Math.round(+bestSetup.quality)}
+  }:(trapSignal.side!=="NEUTRAL"?{...trapSignal,key:"trap|"+(trapSignal.reasons?.[0]||"signal")}:null);
+  const signal=stabilizeActionableSignal(candidateSignal);
   maybeSendSignalAlert(signal,currentPrice);
 
   return {
@@ -1237,9 +1329,10 @@ function buildIndicatorPayload() {
       oneMin:f1.slice(-240),
       fiveMin:f5.slice(-144),
       currentGlobexDelta:relayFresh?relayState.currentGlobexDelta:(globexExact?.delta??null),
-      currentRthDelta:relayFresh?relayState.currentRthDelta:(rthExact?.delta??null),
+      currentRthDelta:rthActive?(relayFresh?relayState.currentRthDelta:(rthExact?.delta??null)):null,
       currentGlobexCvd:relayFresh?relayState.currentGlobexCvd:(globexExact?.cvd??null),
-      currentRthCvd:relayFresh?relayState.currentRthCvd:(rthExact?.cvd??null),
+      currentRthCvd:rthActive?(relayFresh?relayState.currentRthCvd:(rthExact?.cvd??null)):null,
+      rthActive,
       lastTradeAt:relayFresh?(relayState.lastTradeAt||null):(lastTradeAt||null),
       lastTradeReceivedAt:relayFresh?(relayState.lastTradeReceivedAt||null):null,
       lastQuoteReceivedAt:relayFresh?(relayState.lastQuoteReceivedAt||null):null,
