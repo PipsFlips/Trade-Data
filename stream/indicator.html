@@ -622,8 +622,9 @@ async function refresh(){
     document.getElementById("sessionCvd").textContent=Number.isFinite(+sessionCvd)?((+sessionCvd>0?"+":"")+nfmt(sessionCvd)):"—";
     document.getElementById("sessionCvd").className="v "+(+sessionCvd>0?"buy":+sessionCvd<0?"sell":"");
     const cvd=d.flow?.currentRthCvd;
-    document.getElementById("cvd").textContent=Number.isFinite(+cvd)?((+cvd>0?"+":"")+nfmt(cvd)):"—";
-    document.getElementById("cvd").className="v "+(+cvd>0?"buy":+cvd<0?"sell":"");
+    const rthActive=d.flow?.rthActive===true;
+    document.getElementById("cvd").textContent=rthActive&&cvd!==null&&Number.isFinite(+cvd)?((+cvd>0?"+":"")+nfmt(cvd)):"—";
+    document.getElementById("cvd").className="v "+(rthActive&&+cvd>0?"buy":rthActive&&+cvd<0?"sell":"");
     const sig=d.signal?.side||"NEUTRAL", se=document.getElementById("signal");
     se.textContent=sig;se.className="s "+(sig==="BUY"?"buy":sig==="SELL"?"sell":"neutral");
     document.getElementById("score").textContent=(d.signal?.score||0)+"/100";
