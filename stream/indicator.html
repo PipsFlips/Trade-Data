@@ -381,18 +381,19 @@ function vwapSeries(allBars,mode){
     if(lastDate!==null && p.date!==lastDate && mode==="ny"){active=false;pv=0;vol=0;}
     lastDate=p.date;
 
+    let reset=false;
     if(mode==="session"){
-      if(mins===900){pv=0;vol=0;active=true;}       // 15:00 PT reset
-      if(mins>=840 && mins<900) active=false;       // 14:00-15:00 maintenance break
+      if(mins===900){pv=0;vol=0;active=true;reset=true;} // 15:00 PT reset
+      if(mins>=840 && mins<900) active=false;            // 14:00-15:00 maintenance break
     }else{
-      if(mins===390){pv=0;vol=0;active=true;}       // 06:30 PT reset
-      if(mins>=780 || mins<390) active=false;       // hard stop outside 06:30-13:00
+      if(mins===390){pv=0;vol=0;active=true;reset=true;}  // 06:30 PT reset
+      if(mins>=780 || mins<390) active=false;             // hard stop outside 06:30-13:00
     }
 
-    if(!active){out.push({t:bar.t,v:null});continue;}
+    if(!active){out.push({t:bar.t,v:null,reset:false});continue;}
     const v=+bar.v||0,tp=(+bar.h + +bar.l + +bar.c)/3;
     if(v>0){pv+=tp*v;vol+=v;}
-    out.push({t:bar.t,v:vol?pv/vol:null});
+    out.push({t:bar.t,v:vol?pv/vol:null,reset});
   }
   return out;
 }
@@ -600,6 +601,10 @@ function drawChart(data){
         continue;
       }
       const xx=x(i),py=y(+p);
+      // A session reset must always start a new path, even when the market-closed
+      // interval contains no bars. This prevents a vertical/diagonal bridge
+      // from the prior session's final VWAP to the new 15:00 VWAP.
+      if(point?.reset && started){ctx.stroke();started=false;}
       if(!started){ctx.beginPath();ctx.moveTo(xx,py);started=true;}
       else ctx.lineTo(xx,py);
       lastVisible={p:+p,py};
