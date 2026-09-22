@@ -61,6 +61,15 @@ canvas{display:block;width:100%;height:410px;border-radius:8px;background:#0d131
 .status{font-size:11px;color:var(--muted);text-align:center;padding:4px 0}
 .viewerCount{font-size:10px;color:var(--muted);text-align:center;padding:2px 0 6px}
 .viewerCount.multi{color:var(--amber)}
+.legend{display:grid;gap:6px}
+.legend details{background:var(--panel2);border:1px solid var(--line);border-radius:9px;overflow:hidden}
+.legend summary{cursor:pointer;list-style:none;padding:8px 10px;font-size:11px;font-weight:800;color:#d5dee8;display:flex;align-items:center;justify-content:space-between;gap:10px}
+.legend summary::-webkit-details-marker{display:none}
+.legend summary::after{content:"+";color:var(--muted);font-size:14px;font-weight:700}
+.legend details[open] summary::after{content:"−"}
+.legendBody{border-top:1px solid var(--line);padding:8px 10px 10px;font-size:11px;line-height:1.45;color:#b8c3cf}
+.legendBody b{color:#e7edf4}
+.legendBody code{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:10px;color:#d9e2ec}
 @media (max-width:600px){
   .wrap{padding:8px}
   .price{font-size:25px}
@@ -142,23 +151,145 @@ canvas{display:block;width:100%;height:410px;border-radius:8px;background:#0d131
   </div>
 
   <div class="section">
+    <h3>Trap signal / confirmed traps</h3>
+    <div class="reason" id="reason">No confirmed trap signal yet.</div>
+    <div class="rows" id="traps" style="margin-top:7px"></div>
+  </div>
+
+  <div class="section">
     <h3>Nearest actionable levels</h3>
     <div class="rows" id="nearest"></div>
   </div>
 
   <div class="section">
-    <h3>Trap / signal context</h3>
-    <div class="reason" id="reason">No confirmed trap signal yet.</div>
-  </div>
-
-  <div class="section">
-    <h3>Confirmed traps</h3>
-    <div class="rows" id="traps"></div>
-  </div>
-
-  <div class="section">
     <h3>Open gaps</h3>
     <div class="rows" id="gaps"></div>
+  </div>
+
+  <div class="section">
+    <h3>Chart legend / how the system is coded</h3>
+    <div class="legend">
+      <details>
+        <summary>1m Delta, 5m Delta, Session CVD, NY CVD</summary>
+        <div class="legendBody">
+          <b>Delta</b> is aggressive buy volume minus aggressive sell volume for the bar. Positive means more contracts traded at the offer; negative means more traded at the bid. <b>1m Delta</b> and <b>5m Delta</b> are the current local order-flow buckets. <b>Session CVD</b> is cumulative delta for the CME session beginning at 15:00 PT. <b>NY CVD</b> is cumulative delta for RTH only, 06:30–13:00 PT, and is hidden outside that window.
+        </div>
+      </details>
+      <details>
+        <summary>PDH / PDL / PDC / PWH / PWL</summary>
+        <div class="legendBody">
+          <b>PDH</b> = previous regular-session high. <b>PDL</b> = previous regular-session low. <b>PDC</b> = previous regular-session close. <b>PWH/PWL</b> = previous CME trading-week high/low. These are treated as major reference/liquidity levels and can become breakout, rejection, trap, or target locations when price is close enough to them.
+        </div>
+      </details>
+      <details>
+        <summary>ON High / Low / VAH / POC / VAL</summary>
+        <div class="legendBody">
+          <b>ON</b> means the overnight window from 15:00 PT to 06:30 PT. ON High/Low are the highest and lowest traded prices in that window and freeze at the RTH open. <b>VAH/VAL</b> bound the 70% value area of the overnight volume profile. <b>POC</b> is the price with the most volume. The profile is estimated from historical bars unless exact local trade-at-price data is available for that session.
+        </div>
+      </details>
+      <details>
+        <summary>Asia High / Low and London High / Low</summary>
+        <div class="legendBody">
+          <b>Asia</b> is currently defined as 17:00–00:00 PT. <b>London</b> is 00:00–05:20 PT. The high and low of each window become reference/liquidity levels. They are useful for sweeps, rejections, breakouts, and targets because price often reacts around prior session extremes.
+        </div>
+      </details>
+      <details>
+        <summary>Prev VAH / POC / VAL</summary>
+        <div class="legendBody">
+          These are the previous RTH volume-profile levels. <b>VAH/VAL</b> enclose the 70% value area; <b>POC</b> is the highest-volume price. The live engine uses profile location as context: price above value adds bullish context, below value adds bearish context, and the POC is treated as a major reference.
+        </div>
+      </details>
+      <details>
+        <summary>Session VWAP and NY VWAP</summary>
+        <div class="legendBody">
+          <b>Session VWAP</b> resets at 15:00 PT and runs through the CME session. <b>NY VWAP</b> resets at 06:30 PT and is active only through 13:00 PT. Historical chart curves use 5-minute typical price × volume; the current live value can use exact received trades when the relay is healthy. Price above the active VWAP contributes bullish context; below contributes bearish context.
+        </div>
+      </details>
+      <details>
+        <summary>1H pivot levels</summary>
+        <div class="legendBody">
+          A 1-hour pivot is a local swing high or swing low detected against the two hourly bars on each side. Untouched pivots receive more weight. The significance score also considers later excursion, distance from current price, and age. Only the stronger unswept pivots are promoted to chart levels.
+        </div>
+      </details>
+      <details>
+        <summary>ORB — Opening Range Breakout</summary>
+        <div class="legendBody">
+          ORB High/Low are built from the first 15 minutes of RTH, <b>06:30–06:45 PT</b>. A breakout setup is only considered when price is near the appropriate ORB boundary, currently within roughly <code>min(25 pts, max(10 pts, 0.75 × ATR5))</code>. The grade starts at 25 and adds: bias alignment +20, volume ≥1.2× recent 5m median +15, aligned closed 5m delta +15, VWAP alignment +10, next target available +10, and aligned strong trap signal +5; capped at 100.
+        </div>
+      </details>
+      <details>
+        <summary>15m OB — Order Block</summary>
+        <div class="legendBody">
+          OBs are detected on aggregated 15-minute bars. The origin candle must be opposite the subsequent displacement direction. The next 1–3 bars must break the recent 6-bar swing by at least two ticks and travel at least <b>1.25× 15m ATR</b>. A bullish OB uses the origin candle's open/low zone; a bearish OB uses open/high. It is discarded if later closes invalidate the far side. Freshness is based on retests: ≤1 touch is considered fresh. A setup is shown only when the OB scores at least 65 and price is within <code>min(20 pts, max(8 pts, 0.9 × ATR5))</code>.
+        </div>
+      </details>
+      <details>
+        <summary>OB grading</summary>
+        <div class="legendBody">
+          An OB begins at <b>25 points</b>. It receives +15 for displacement ≥1.25× ATR, +10 for strong first impulse-body quality, +10 if fresh, +10 for nearby major-level confluence, +10 for VWAP alignment, +10 for aligned order-flow delta, and +10 when there is at least ~1.5R room to the next major target. Maximum = 100.
+        </div>
+      </details>
+      <details>
+        <summary>Trap / confirmed trap</summary>
+        <div class="legendBody">
+          A <b>buyer trap</b> occurs when price sweeps above a major level by at least two ticks with positive 1m delta, closes back below the level, and the next closed minute fails to reclaim it. That implies trapped aggressive buyers and produces a SELL-side reversal context. A <b>seller trap</b> is the inverse: sweep below support with negative delta, reclaim above, then follow-through holds; that produces BUY-side context. Traps expire from the active signal after about 20 minutes and are invalidated by later acceptance through the swept level.
+        </div>
+      </details>
+      <details>
+        <summary>Trap grading</summary>
+        <div class="legendBody">
+          The legacy trap score starts with confirmed trap +25, then can add: closed 5m structure +20, aligned closed 1m delta +10, aligned closed 5m delta +10, session CVD aligned for at least 10 seconds +10, VWAP alignment +10, major-level confluence +10, and adequate target room +5. The active top-right score is no longer trap-only; this trap score is one candidate input to the broader setup engine.
+        </div>
+      </details>
+      <details>
+        <summary>Iceberg / absorption</summary>
+        <div class="legendBody">
+          This is a <b>probable</b> hidden-liquidity detector, not direct visibility of hidden orders. It combines executed trades with Level-2 depth replenishment at the same price. Repeated aggressive buys plus ask replenishment suggest a passive seller / possible sell iceberg; repeated aggressive sells plus bid replenishment suggest a passive buyer / possible buy iceberg. Strong recent detections can add ±2 to market bias and can generate a conditional setup after rejection/reclaim confirmation. Depth-side mapping should still be treated as inferred until fully validated against live payload behavior.
+        </div>
+      </details>
+      <details>
+        <summary>Open gaps</summary>
+        <div class="legendBody">
+          Two gaps are tracked. <b>Session gap</b>: the prior pre-maintenance close versus the 15:00 PT CME reopen. <b>RTH gap</b>: the prior RTH close versus the next 06:30 PT open. A gap disappears once filled. A gap-fill setup is considered only when price is near an unfilled gap; proximity is currently <code>max(12 pts, 0.65 × ATR5)</code>.
+        </div>
+      </details>
+      <details>
+        <summary>Gap grading</summary>
+        <div class="legendBody">
+          A gap-fill setup starts at <b>30</b>. It adds +20 for directional bias alignment, +20 when both closed 1m and 5m delta align, +10 for VWAP alignment, +10 for relative 5m volume ≥1.15× recent median, and +10 for an aligned strong trap signal. Maximum = 100.
+        </div>
+      </details>
+      <details>
+        <summary>Live market bias</summary>
+        <div class="legendBody">
+          Bias is a separate context score, not a trade probability. Current weights: active VWAP ±2, profile location ±1, closed 5m structure ±1, closed 5m delta ±1, Session CVD ±1, 15m delta trend ±2, recent confirmed trap ±2, recent strong iceberg ±2, and a strong aligned trap signal ±2. <b>Bullish</b> begins at +3, <b>Bearish</b> at −3, <b>Neutral</b> is −1 to +1, and the in-between states are Mixed. The displayed analysis must persist about 15 seconds before replacing the prior state.
+        </div>
+      </details>
+      <details>
+        <summary>Top-right BUY / SELL / NEUTRAL grade</summary>
+        <div class="legendBody">
+          This is the <b>best current actionable setup grade</b>, not a probability of success. The server ranks qualified setups and uses the highest numeric quality score. A candidate must score at least 50 and remain the same directional/setup candidate for about <b>12 seconds</b> before becoming active. If the setup disappears, the prior signal is held for about <b>15 seconds</b> before clearing. This is designed to prevent tick-by-tick flipping.
+        </div>
+      </details>
+      <details>
+        <summary>Major-level breakout / breakdown grading</summary>
+        <div class="legendBody">
+          Generic breakout/breakdown setups are only considered when price is close to the nearest major level, currently within <code>min(30 pts, max(12 pts, ATR5))</code>. Base grade = 45. It adds +15 for aligned closed 5m delta, +10 for VWAP alignment, and +15 for aligned 15m delta trend. Maximum = 85 under the current formula.
+        </div>
+      </details>
+      <details>
+        <summary>ATR5 and proximity filters</summary>
+        <div class="legendBody">
+          <b>ATR5</b> is the recent average true range of 5-minute bars and is used to scale distance filters to current volatility. Proximity filters prevent stale recommendations from remaining active when price is far from the relevant level. OB, ORB, major-level, and gap setups each use separate capped ATR-based distance rules.
+        </div>
+      </details>
+      <details>
+        <summary>Colors and chart toggles</summary>
+        <div class="legendBody">
+          Green generally marks support/buy-side references; red marks resistance/sell-side references; Asia levels are yellow; London levels are blue; weekly levels are white; previous POC is dark red. The chart buttons can independently hide/show Sessions, Prior H/L, Profiles, 1H pivots, 15m OB, ORB, VWAP, and Traps. Hidden session layers are also removed from chart autoscaling so they do not compress the candles.
+        </div>
+      </details>
+    </div>
   </div>
 
   <div class="status" id="status">Connecting…</div>
