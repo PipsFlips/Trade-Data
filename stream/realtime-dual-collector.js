@@ -227,7 +227,20 @@ const collectorStartedAt=new Date().toISOString();
     try{if(conn.state!==signalR.HubConnectionState.Disconnected)await conn.stop();}catch{}
     await getToken();await conn.start();await subscribeAll();
   }
-  setInterval(()=>{const now=Date.now();for(const sym of ["MNQ","MES"]){const st=states[sym],ta=st.lastTradeReceivedAt?now-Date.parse(st.lastTradeReceivedAt):Infinity,qa=st.lastQuoteReceivedAt?now-Date.parse(st.lastQuoteReceivedAt):Infinity,da=st.lastDepthReceivedAt?now-Date.parse(st.lastDepthReceivedAt):Infinity;if(ta>15000&&Math.min(qa,da)<8000){recover(sym+" trade stale").catch(()=>{});break;}}},5000);
+  setInterval(()=>{
+    const now=Date.now();
+    for(const sym of ["MNQ","MES"]){
+      const st=states[sym];
+      const ta=st.lastTradeReceivedAt?now-Date.parse(st.lastTradeReceivedAt):Infinity;
+      const qa=st.lastQuoteReceivedAt?now-Date.parse(st.lastQuoteReceivedAt):Infinity;
+      const da=st.lastDepthReceivedAt?now-Date.parse(st.lastDepthReceivedAt):Infinity;
+      const tradeStaleMs=sym==="MES"?45000:15000;
+      if(ta>tradeStaleMs&&Math.min(qa,da)<8000){
+        recover(sym+" trade stale "+Math.round(ta/1000)+"s").catch(()=>{});
+        break;
+      }
+    }
+  },5000);
   setInterval(()=>Promise.all([relayOne("MNQ"),relayOne("MES")]).catch(e=>console.error("RELAY_ERR",e.message)),2000);
   setInterval(saveState,STATE_SAVE_MS);
   setInterval(()=>{for(const st of Object.values(states))prune(st);},5*60*1000);
