@@ -42,6 +42,12 @@ body{padding:env(safe-area-inset-top) env(safe-area-inset-right) calc(14px + env
 canvas{display:block;width:100%;height:410px;border-radius:8px;background:#0d131a}
 .section{background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:9px;margin-bottom:9px}
 .section h3{font-size:12px;margin:0 0 7px;color:#cbd5df;text-transform:uppercase;letter-spacing:.06em}
+.collapsibleSection{padding:0;overflow:hidden}
+.collapsibleSectionSummary{cursor:pointer;list-style:none;padding:9px 10px;font-size:12px;font-weight:800;color:#cbd5df;text-transform:uppercase;letter-spacing:.06em;display:flex;align-items:center;justify-content:space-between}
+.collapsibleSectionSummary::-webkit-details-marker{display:none}
+.collapsibleSectionSummary::after{content:"+";color:var(--muted);font-size:15px;font-weight:700}
+.collapsibleSection[open]>.collapsibleSectionSummary::after{content:"−"}
+.collapsibleSection>.rows{padding:0 9px 9px}
 .rows{display:grid;grid-template-columns:1fr 1fr;gap:6px}
 .row{display:flex;justify-content:space-between;gap:10px;background:var(--panel2);border-radius:8px;padding:7px 8px;font-size:12px}
 .row span:first-child{color:var(--muted)}
@@ -173,15 +179,15 @@ canvas{display:block;width:100%;height:410px;border-radius:8px;background:#0d131
     <div class="rows" id="traps" style="margin-top:7px"></div>
   </div>
 
-  <div class="section">
-    <h3>Nearest actionable levels</h3>
+  <details class="section collapsibleSection">
+    <summary class="collapsibleSectionSummary">Nearest actionable levels</summary>
     <div class="rows" id="nearest"></div>
-  </div>
+  </details>
 
-  <div class="section">
-    <h3>Open gaps</h3>
+  <details class="section collapsibleSection">
+    <summary class="collapsibleSectionSummary">Open gaps</summary>
     <div class="rows" id="gaps"></div>
-  </div>
+  </details>
 
   <details class="section legendMaster">
     <summary class="legendMasterSummary">Chart legend / how the system is coded</summary>
