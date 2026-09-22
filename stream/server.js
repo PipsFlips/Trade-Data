@@ -18,6 +18,7 @@ const REALTIME_RELAY_TOKEN = process.env.REALTIME_RELAY_TOKEN || "";
 const DIRECT_TOPSTEP_REALTIME = String(process.env.DIRECT_TOPSTEP_REALTIME || "false").toLowerCase()==="true";
 const MARKET_SYMBOL = String(process.env.MARKET_SYMBOL || "MNQ").toUpperCase();
 const MARKET_DESC = MARKET_SYMBOL==="MES" ? "MICRO E-MINI S&P" : "MICRO E-MINI NASDAQ";
+const MES_SERVICE_URL = process.env.MES_SERVICE_URL || "";
 const MARKET_PARAMS = MARKET_SYMBOL==="MES"
   ? {obMin:2,obCap:5,orbMin:2.5,orbCap:6,majorMin:3,majorCap:8,gapMin:3.5,clusterMin:.75}
   : {obMin:8,obCap:20,orbMin:10,orbCap:25,majorMin:12,majorCap:30,gapMin:12,clusterMin:2};
@@ -1592,6 +1593,15 @@ app.get("/health",(req,res)=>res.json({
 
 app.get("/indicator.json",(req,res)=>res.json(buildIndicatorPayload()));
 app.get("/mnq-indicator.json",(req,res)=>res.json(buildIndicatorPayload()));
+app.get("/mes-indicator.json",async(req,res)=>{
+  if(MARKET_SYMBOL==="MES") return res.json(buildIndicatorPayload());
+  if(!MES_SERVICE_URL) return res.status(503).json({error:"MES service not configured"});
+  try{
+    const r=await fetch(MES_SERVICE_URL.replace(/\/$/,"")+"/indicator.json",{headers:{"Accept":"application/json"}});
+    if(!r.ok) return res.status(502).json({error:"MES upstream "+r.status});
+    res.json(await r.json());
+  }catch(e){res.status(502).json({error:"MES upstream unavailable"});}
+});
 
 app.post("/viewer-heartbeat",(req,res)=>{
   const id=String(req.body?.id||"").trim();
