@@ -64,7 +64,7 @@ canvas{display:block;width:100%;height:410px;border-radius:8px;background:#0d131
 .status{font-size:11px;color:var(--muted);text-align:center;padding:4px 0}
 .viewerCount{font-size:10px;color:var(--muted);text-align:center;padding:2px 0 6px}
 .viewerCount.multi{color:var(--amber)}
-.legend{display:grid;gap:6px}
+.legendMaster{padding:0;overflow:hidden}.legendMasterSummary{cursor:pointer;list-style:none;padding:10px 11px;font-size:12px;font-weight:850;color:#cbd5df;text-transform:uppercase;letter-spacing:.06em;display:flex;align-items:center;justify-content:space-between}.legendMasterSummary::-webkit-details-marker{display:none}.legendMasterSummary::after{content:"+";color:var(--muted);font-size:16px}.legendMaster[open]>.legendMasterSummary::after{content:"−"}.legendMaster>.legend{padding:0 9px 9px}.liqMeta{font-size:9px;color:var(--muted);margin-top:6px;line-height:1.35}.legend{display:grid;gap:6px}
 .legend details{background:var(--panel2);border:1px solid var(--line);border-radius:9px;overflow:hidden}
 .legend summary{cursor:pointer;list-style:none;padding:8px 10px;font-size:11px;font-weight:800;color:#d5dee8;display:flex;align-items:center;justify-content:space-between;gap:10px}
 .legend summary::-webkit-details-marker{display:none}
@@ -132,6 +132,7 @@ canvas{display:block;width:100%;height:410px;border-radius:8px;background:#0d131
       <button class="layerbtn active" data-layer="orb">ORB</button>
       <button class="layerbtn active" data-layer="vwap">VWAP</button>
       <button class="layerbtn active" data-layer="traps">Traps</button>
+      <button class="layerbtn active" data-layer="liquidity">Liquidity</button>
     </div>
     <div style="display:flex;gap:12px;align-items:center;margin:0 0 5px 2px;font-size:9px;color:var(--muted)">
       <span><i style="display:inline-block;width:12px;border-top:1px dotted #f2c94c;vertical-align:middle;margin-right:4px"></i>Asia 17:00</span>
@@ -161,6 +162,12 @@ canvas{display:block;width:100%;height:410px;border-radius:8px;background:#0d131
   </div>
 
   <div class="section">
+    <h3>Resting liquidity</h3>
+    <div class="rows" id="restingLiquidity"></div>
+    <div class="liqMeta" id="liquidityMeta">Waiting for visible DOM depth.</div>
+  </div>
+
+  <div class="section">
     <h3>Trap signal / confirmed traps</h3>
     <div class="reason" id="reason">No confirmed trap signal yet.</div>
     <div class="rows" id="traps" style="margin-top:7px"></div>
@@ -176,8 +183,8 @@ canvas{display:block;width:100%;height:410px;border-radius:8px;background:#0d131
     <div class="rows" id="gaps"></div>
   </div>
 
-  <div class="section">
-    <h3>Chart legend / how the system is coded</h3>
+  <details class="section legendMaster">
+    <summary class="legendMasterSummary">Chart legend / how the system is coded</summary>
     <div class="legend">
       <details>
         <summary>1m Delta, 5m Delta, Session CVD, NY CVD</summary>
@@ -306,13 +313,19 @@ canvas{display:block;width:100%;height:410px;border-radius:8px;background:#0d131
         </div>
       </details>
       <details>
+        <summary>Resting liquidity / standing DOM orders</summary>
+        <div class="legendBody">
+          <b>Resting liquidity</b> is visible limit-order size currently standing in the order book. Large <b>BID</b> size is potential passive buying support; large <b>ASK</b> size is potential passive selling resistance. It is <b>not</b> treated as a buy/sell signal by itself because orders can be cancelled or moved. The detector compares nearby visible depth against the current book's median size and flags unusually large levels (dynamic threshold, with separate minimum floors for MNQ and MES). <b>Holding</b> means the size remains posted, <b>Being Hit</b> means recent trades are interacting with the level while displayed size is decreasing, and <b>Replenishing</b> means displayed size increases again after interaction. <b>Pulled</b> means a large order disappeared without nearby execution evidence; <b>Consumed</b> means it disappeared while trades were occurring at that price. Only the strongest nearby current levels are marked on the chart. Visible DOM liquidity can be spoofed/pulled, so confirmation from executions, absorption, delta/CVD, and price response is more important than displayed size alone.
+        </div>
+      </details>
+      <details>
         <summary>Colors and chart toggles</summary>
         <div class="legendBody">
           Green generally marks support/buy-side references; red marks resistance/sell-side references; Asia levels are yellow; London levels are blue; weekly levels are white; previous POC is dark red. The chart buttons can independently hide/show Sessions, Prior H/L, Profiles, 1H pivots, 15m OB, ORB, VWAP, and Traps. Hidden session layers are also removed from chart autoscaling so they do not compress the candles.
         </div>
       </details>
     </div>
-  </div>
+  </details>
 
   <div class="status" id="status">Connecting…</div>
   <div class="viewerCount" id="viewerCount">Viewers: —</div>
@@ -370,7 +383,7 @@ const levelColor=l=>{
 let chartBarCount=48;
 let chartMode="intraday";
 let lastData=null;
-const defaultChartLayers={sessions:true,prior:true,profiles:true,pivots:true,ob:true,orb:true,vwap:true,traps:true};
+const defaultChartLayers={sessions:true,prior:true,profiles:true,pivots:true,ob:true,orb:true,vwap:true,traps:true,liquidity:true};
 let chartLayers={...defaultChartLayers};
 try{
   const saved=JSON.parse(localStorage.getItem("mnqChartLayers")||"null");
@@ -548,6 +561,25 @@ function drawChart(data){
     const tw=Math.min(118,ctx.measureText(label).width+8);
     ctx.fillStyle="rgba(13,19,26,.82)";ctx.fillRect(labelX-tw/2,py-14,tw,12);
     ctx.fillStyle=col;ctx.textAlign="center";ctx.fillText(label,labelX,py-8);
+  }
+
+  // Significant visible resting liquidity: short right-edge markers only, so DOM size does not dominate the chart.
+  if(chartLayers.liquidity!==false){
+    const liq=(data.restingLiquidity?.levels||[])
+      .filter(z=>Number.isFinite(+z.price)&&+z.price>=min&&+z.price<=max)
+      .sort((a,b)=>(+b.score||0)-(+a.score||0))
+      .slice(0,3);
+    ctx.font="bold 9px -apple-system,BlinkMacSystemFont,Segoe UI,Arial";
+    for(const z of liq){
+      const py=y(+z.price),bid=z.side==="BID",col=bid?"#31c48d":"#f06565";
+      const x1=left+cw*.72;
+      ctx.save();ctx.strokeStyle=col;ctx.globalAlpha=.78;ctx.lineWidth=2;ctx.setLineDash([6,4]);
+      ctx.beginPath();ctx.moveTo(x1,py);ctx.lineTo(w-right,py);ctx.stroke();ctx.restore();
+      const tag=(bid?"BID ":"ASK ")+Math.round(+z.size||0);
+      ctx.textAlign="right";ctx.fillStyle="rgba(13,19,26,.88)";
+      const tw=ctx.measureText(tag).width+8;ctx.fillRect(w-right-tw-3,py-12,tw,11);
+      ctx.fillStyle=col;ctx.fillText(tag,w-right-6,py-7);
+    }
   }
 
   // Confirmed trap zones only. Rectangles extend from the trap event forward.
@@ -733,6 +765,27 @@ function renderIcebergs(data){
   }).join("")||'<div class="reason">No probable iceberg absorption detected.</div>';
 }
 
+function renderRestingLiquidity(data){
+  const el=document.getElementById("restingLiquidity"),meta=document.getElementById("liquidityMeta");
+  const r=data.restingLiquidity||{},levels=(r.levels||[]).slice(0,6),events=(r.events||[]).slice(0,2);
+  const rows=[
+    ...levels.map(x=>{
+      const cls=x.side==="BID"?"buy":"sell";
+      const status=String(x.status||"HOLDING").replaceAll("_"," ");
+      return '<div class="row"><span><i class="dot '+cls+'"></i>'+x.side+' '+Math.round(+x.size||0)+' · '+status+'</span><b class="'+cls+'">'+fmt(x.price)+'</b></div>';
+    }),
+    ...events.map(x=>{
+      const cls=x.side==="BID"?"buy":"sell";
+      return '<div class="row"><span><i class="dot '+cls+'"></i>'+x.side+' '+Math.round(+x.size||0)+' · '+String(x.status||"")+'</span><b class="'+cls+'">'+fmt(x.price)+'</b></div>';
+    })
+  ];
+  el.innerHTML=rows.join("")||'<div class="reason">No unusually large nearby resting orders detected.</div>';
+  if(meta){
+    const th=Number.isFinite(+r.threshold)?Math.round(+r.threshold):null;
+    meta.textContent=th?"Dynamic significance threshold: "+th+" contracts · chart shows strongest nearby levels only.":"Waiting for visible DOM depth.";
+  }
+}
+
 function renderAnalysis(data){
   const a=data.analysis||{};
   const pill=document.getElementById("biasPill");
@@ -812,7 +865,7 @@ async function refresh(){
     se.textContent=sig;se.className="s "+(sig==="BUY"?"buy":sig==="SELL"?"sell":"neutral");
     document.getElementById("score").textContent=(d.signal?.score||0)+"/100";
     document.getElementById("reason").textContent=(d.signal?.reasons||[]).join(" • ")||"No confirmed trap signal yet.";
-    renderAnalysis(d);renderIcebergs(d);nearestLevels(d);trapRows(d);renderGaps(d);drawChart(d);
+    renderAnalysis(d);renderIcebergs(d);renderRestingLiquidity(d);nearestLevels(d);trapRows(d);renderGaps(d);drawChart(d);
     status.textContent=(d.connected?"Live feed connected":"Feed reconnecting")+" · auto refresh 2s";
   }catch(e){
     status.textContent="Indicator error: "+e.message;
