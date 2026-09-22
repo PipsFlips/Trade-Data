@@ -34,6 +34,9 @@ body{padding:env(safe-area-inset-top) env(safe-area-inset-right) calc(14px + env
 .chartHint{font-size:10px;color:var(--muted)}
 .winbtn{appearance:none;border:1px solid var(--line);background:var(--panel2);color:var(--muted);border-radius:8px;padding:5px 10px;font-size:11px;font-weight:700}
 .winbtn.active{color:var(--text);border-color:#41536a;background:#1a2633}
+.marketToggle{display:flex;gap:4px;margin:0 0 6px 0}
+.marketbtn{appearance:none;border:1px solid var(--line);background:#0d131a;color:#758397;border-radius:999px;padding:5px 10px;font-size:10px;font-weight:900;letter-spacing:.05em}
+.marketbtn.active{color:var(--text);border-color:#4b617d;background:#192533}
 .layerbtn{appearance:none;border:1px solid var(--line);background:#0d131a;color:#667386;border-radius:8px;padding:4px 8px;font-size:9px;font-weight:800;letter-spacing:.02em}
 .layerbtn.active{color:var(--text);border-color:#41536a;background:#1a2633}
 canvas{display:block;width:100%;height:410px;border-radius:8px;background:#0d131a}
@@ -83,7 +86,11 @@ canvas{display:block;width:100%;height:410px;border-radius:8px;background:#0d131
 <div class="wrap">
   <div class="top">
     <div>
-      <div class="brand">PipsFlips • MNQ Live</div>
+      <div class="marketToggle">
+        <button class="marketbtn active" data-market="MNQ">MNQ</button>
+        <button class="marketbtn" data-market="MES">MES</button>
+      </div>
+      <div class="brand" id="brand">PipsFlips • MNQ Live</div>
       <div class="price" id="price">—</div>
       <div class="sub"><span id="contract">MNQ</span> · <span id="stamp">waiting for data</span></div>
       <div class="flowFresh stale" id="flowFresh"><span class="fdot"></span><span id="flowFreshText">ORDER FLOW WAITING</span></div>
@@ -281,6 +288,12 @@ canvas{display:block;width:100%;height:410px;border-radius:8px;background:#0d131
         </div>
       </details>
       <details>
+        <summary>MNQ / MES market toggle</summary>
+        <div class="legendBody">
+          The top toggle switches the entire dashboard between <b>MNQ</b> and <b>MES</b>. Each market has its own contract, realtime relay state, delta/CVD, VWAP, profile, levels, order blocks, traps, gaps, and setup grades. The scoring model is structurally the same, but MES uses tighter point-distance caps so proximity logic scales appropriately to the smaller index range.
+        </div>
+      </details>
+      <details>
         <summary>Chart time ranges: 1h–8h / 1D / 1W / 1M</summary>
         <div class="legendBody">
           The short views (1h–8h) use live 5-minute candles. <b>1D</b> uses the most recent 24 hours of 5-minute candles. <b>1W</b> uses hourly candles for the most recent week. <b>1M</b> uses daily candles for roughly the last 30 trading/calendar days available. Horizontal market levels remain available on all views; intraday-only overlays such as session VWAP curves, session-start markers, and the 5m delta histogram are suppressed on the higher-timeframe views to keep them readable.
@@ -306,6 +319,11 @@ canvas{display:block;width:100%;height:410px;border-radius:8px;background:#0d131
 </div>
 
 <script>
+let activeMarket="MNQ";
+try{
+  const savedMarket=localStorage.getItem("pipsflipsMarket");
+  if(savedMarket==="MES"||savedMarket==="MNQ") activeMarket=savedMarket;
+}catch{}
 let viewerId=null;
 try{
   viewerId=localStorage.getItem("mnqViewerId");
@@ -742,11 +760,13 @@ function renderAnalysis(data){
 async function refresh(){
   const status=document.getElementById("status");
   try{
-    const r=await fetch("/mnq-indicator.json",{cache:"no-store"});
+    const endpoint=activeMarket==="MES"?"/mes-indicator.json":"/indicator.json";
+    const r=await fetch(endpoint,{cache:"no-store"});
     if(!r.ok) throw new Error("HTTP "+r.status);
     const d=await r.json();
     document.getElementById("price").textContent=fmt(d.currentPrice);
-    document.getElementById("contract").textContent=d.contract?.name||"MNQ";
+    document.getElementById("contract").textContent=d.contract?.name||activeMarket;
+    document.getElementById("brand").textContent="PipsFlips • "+activeMarket+" Live";
     document.getElementById("stamp").textContent=new Date(d.generatedUtc).toLocaleTimeString([], {hour:"numeric",minute:"2-digit",second:"2-digit"});
     const freshEl=document.getElementById("flowFresh");
     const freshText=document.getElementById("flowFreshText");
@@ -796,6 +816,21 @@ async function refresh(){
     status.textContent="Indicator error: "+e.message;
   }
 }
+document.querySelectorAll(".marketbtn").forEach(btn=>{
+  btn.classList.toggle("active",btn.dataset.market===activeMarket);
+  btn.addEventListener("click",()=>{
+    activeMarket=btn.dataset.market;
+    document.querySelectorAll(".marketbtn").forEach(b=>b.classList.toggle("active",b===btn));
+    try{localStorage.setItem("pipsflipsMarket",activeMarket);}catch{}
+    lastData=null;
+    document.getElementById("brand").textContent="PipsFlips • "+activeMarket+" Live";
+    document.getElementById("contract").textContent=activeMarket;
+    document.getElementById("price").textContent="—";
+    document.getElementById("signal").textContent="NEUTRAL";
+    document.getElementById("score").textContent="0/100";
+    refresh();
+  });
+});
 document.querySelectorAll(".winbtn").forEach(btn=>btn.addEventListener("click",()=>{
   chartMode=btn.dataset.mode||"intraday";
   if(chartMode==="intraday") chartBarCount=+btn.dataset.bars;
