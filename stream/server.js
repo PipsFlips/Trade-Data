@@ -16,6 +16,11 @@ const ZONE = "America/Los_Angeles";
 const ALERT_SCORE_THRESHOLD = Number(process.env.ALERT_SCORE_THRESHOLD || 55);
 const REALTIME_RELAY_TOKEN = process.env.REALTIME_RELAY_TOKEN || "";
 const DIRECT_TOPSTEP_REALTIME = String(process.env.DIRECT_TOPSTEP_REALTIME || "false").toLowerCase()==="true";
+const MARKET_SYMBOL = String(process.env.MARKET_SYMBOL || "MNQ").toUpperCase();
+const MARKET_DESC = MARKET_SYMBOL==="MES" ? "MICRO E-MINI S&P" : "MICRO E-MINI NASDAQ";
+const MARKET_PARAMS = MARKET_SYMBOL==="MES"
+  ? {obMin:2,obCap:5,orbMin:2.5,orbCap:6,majorMin:3,majorCap:8,gapMin:3.5,clusterMin:.75}
+  : {obMin:8,obCap:20,orbMin:10,orbCap:25,majorMin:12,majorCap:30,gapMin:12,clusterMin:2};
 const ALERT_SMS_TO = process.env.ALERT_SMS_TO || "";
 const TWILIO_ACCOUNT_SID = process.env.TWILIO_ACCOUNT_SID || "";
 const TWILIO_AUTH_TOKEN = process.env.TWILIO_AUTH_TOKEN || "";
@@ -90,13 +95,13 @@ async function post(apiPath, payload, retry=true) {
   return r.json();
 }
 async function findContract() {
-  const r = await post("/api/Contract/search", {searchText:"MNQ", live:LIVE});
+  const r = await post("/api/Contract/search", {searchText:MARKET_SYMBOL, live:LIVE});
   const cs = (r.contracts || []).filter(c =>
-    JSON.stringify(c).toUpperCase().includes("MNQ") ||
-    String(c.description || "").toUpperCase().includes("MICRO E-MINI NASDAQ")
+    JSON.stringify(c).toUpperCase().includes(MARKET_SYMBOL) ||
+    String(c.description || "").toUpperCase().includes(MARKET_DESC)
   );
   contract = cs.find(c => c.activeContract) || cs[0];
-  if (!contract) throw new Error("MNQ contract not found");
+  if (!contract) throw new Error(MARKET_SYMBOL+" contract not found");
 }
 async function bars(unit, unitNumber, days, limit=20000) {
   const end = DateTime.utc();
@@ -526,7 +531,7 @@ function detectOpeningGaps(five,currentPrice,atr5){
       if(dir==="DOWN" && +b.h>=prevClose){filledAt=b.t;break;}
     }
     const distance=currentPrice<low?low-currentPrice:currentPrice>high?currentPrice-high:0;
-    const proximity=Math.max(12,(Number.isFinite(+atr5)?+atr5:20)*.65);
+    const proximity=Math.max(MARKET_PARAMS.gapMin,(Number.isFinite(+atr5)?+atr5:20)*.65);
     gaps.push({
       id:kind+"-"+openRow.pt.toISODate(),
       kind,label,date:openRow.pt.toISODate(),direction:dir,
@@ -762,7 +767,7 @@ function buildMarketAnalysis({currentPrice,levels,f1,f5,signal,traps,orderBlocks
     })[0];
   if(nearbyOb){
     const dist=currentPrice<+nearbyOb.low?+nearbyOb.low-currentPrice:currentPrice>+nearbyOb.high?currentPrice-+nearbyOb.high:0;
-    const obProximity=Math.min(20,Math.max(8,atr*.9));
+    const obProximity=Math.min(MARKET_PARAMS.obCap,Math.max(MARKET_PARAMS.obMin,atr*.9));
     if(dist<=obProximity){
       const tgt=targetFor(nearbyOb.side,(nearbyOb.low+nearbyOb.high)/2);
       setups.push({
@@ -784,7 +789,7 @@ function buildMarketAnalysis({currentPrice,levels,f1,f5,signal,traps,orderBlocks
     const volRatio=medVol?liveVol/medVol:null;
     const d=+closed5.delta||0;
     const distHi=Math.abs(currentPrice-+orb.high),distLo=Math.abs(currentPrice-+orb.low);
-    const orbProximity=Math.min(25,Math.max(10,atr*.75));
+    const orbProximity=Math.min(MARKET_PARAMS.orbCap,Math.max(MARKET_PARAMS.orbMin,atr*.75));
     const nearHi=distHi<=orbProximity;
     const nearLo=distLo<=orbProximity;
     const longBias=bias==="BULLISH"||bias==="MIXED";
@@ -847,7 +852,7 @@ function buildMarketAnalysis({currentPrice,levels,f1,f5,signal,traps,orderBlocks
     });
   }
 
-  const majorProximity=Math.min(30,Math.max(12,atr));
+  const majorProximity=Math.min(MARKET_PARAMS.majorCap,Math.max(MARKET_PARAMS.majorMin,atr));
   if((bias==="BULLISH"||bias==="MIXED") && above[0] && Math.abs(+above[0].price-currentPrice)<=majorProximity){
     const lvl=above[0],tgt=targetFor("BUY",+lvl.price+0.01);
     setups.push({
@@ -896,7 +901,7 @@ function maybeSendSignalAlert(signal,currentPrice){
   const key=signal.side+":"+Math.floor(signal.score/5);
   if(lastSignalAlert.key===key && Date.now()-lastSignalAlert.at<30*60000) return;
   lastSignalAlert={key,at:Date.now()};
-  const msg=`MNQ ${signal.side} score ${signal.score}/100 at ${Number(currentPrice).toFixed(2)}. ${(signal.reasons||[]).slice(0,3).join(" | ")}`;
+  const msg=`${MARKET_SYMBOL} ${signal.side} score ${signal.score}/100 at ${Number(currentPrice).toFixed(2)}. ${(signal.reasons||[]).slice(0,3).join(" | ")}`;
   sendSmsAlert(msg).catch(e=>console.error("sms alert",e.message));
 }
 
@@ -1161,7 +1166,7 @@ function buildIndicatorPayload() {
   const trapCandidatesRaw=[];
   const maxTrapAgeMs=20*60000;
   const atr5ForTraps=current5mAtr(latestSnapshot.bars?.fiveMinRecent||[],20)||20;
-  const clusterDistance=Math.max(2.0,atr5ForTraps*.08);
+  const clusterDistance=Math.max(MARKET_PARAMS.clusterMin,atr5ForTraps*.08);
 
   for(const l of levels.filter(x=>x.priority>=80)){
     for(let i=Math.max(0,closed1.length-22);i<closed1.length-1;i++){
@@ -1318,7 +1323,8 @@ function buildIndicatorPayload() {
   maybeSendSignalAlert(signal,currentPrice);
 
   return {
-    schemaVersion:"1.3",
+    schemaVersion:"1.4",
+    marketSymbol:MARKET_SYMBOL,
     generatedUtc:DateTime.utc().toISO(),
     generatedPacific:nowPT().toISO(),
     connected,
@@ -1584,6 +1590,7 @@ app.get("/health",(req,res)=>res.json({
   lastRawTradeEvent,lastRawQuoteEvent,lastRawDepthEvent,reconnectCount,subscriptionResults
 }));
 
+app.get("/indicator.json",(req,res)=>res.json(buildIndicatorPayload()));
 app.get("/mnq-indicator.json",(req,res)=>res.json(buildIndicatorPayload()));
 
 app.post("/viewer-heartbeat",(req,res)=>{
@@ -1600,9 +1607,10 @@ app.get("/indicator",(req,res)=>{
   catch(e){ res.status(500).type("text").send("Indicator UI unavailable"); }
 });
 
+app.get("/snapshot.json",(req,res)=>res.json(latestSnapshot||{}));
 app.get("/mnq-snapshot.json",(req,res)=>res.json(latestSnapshot||{}));
 
-app.get("/mnq-profile.json",(req,res)=>{
+app.get("/profile.json",(req,res)=>{
   const currentSession=currentTradingSessionDate();
   const priorRthDate=priorBusinessDateStr();
 
@@ -1617,6 +1625,7 @@ app.get("/mnq-profile.json",(req,res)=>{
     previousRTH:priorRthDate ? finalizeProfile(profiles[profileKey("rth",priorRthDate)]) : null
   });
 });
+app.get("/mnq-profile.json",(req,res)=>res.redirect(307,"/profile.json"));
 
 app.get("/mnq-morning.json",(req,res)=>{
   const currentSession=currentTradingSessionDate();
@@ -1637,7 +1646,7 @@ app.get("/mnq-morning.json",(req,res)=>{
   });
 });
 
-app.get("/",(req,res)=>res.type("text").send("MNQ unified market-data service v3.4\n"));
+app.get("/",(req,res)=>res.type("text").send(MARKET_SYMBOL+" unified market-data service v3.5\n"));
 
 app.listen(PORT,()=>console.log(`HTTP on :${PORT}`));
 
