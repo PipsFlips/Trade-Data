@@ -777,13 +777,15 @@ async function refresh(){
     const relayAge=Number.isFinite(relayAt)?Math.max(0,Math.round((Date.now()-relayAt)/1000)):null;
     const tradeAge=Number.isFinite(tradeAt)?Math.max(0,Math.round((Date.now()-tradeAt)/1000)):null;
 
+    const liveTradeSec=activeMarket==="MES"?12:5;
+    const quietTradeSec=activeMarket==="MES"?35:15;
     if(relayAge===null || relayAge>10){
       freshEl.className="flowFresh stale";
       freshText.textContent=relayAge===null?"RELAY OFFLINE":"RELAY OFFLINE • "+relayAge+"s";
-    }else if(tradeAge!==null && tradeAge<=5){
+    }else if(tradeAge!==null && tradeAge<=liveTradeSec){
       freshEl.className="flowFresh live";
       freshText.textContent="ORDER FLOW LIVE • "+tradeAge+"s";
-    }else if(tradeAge!==null && tradeAge<=15){
+    }else if(tradeAge!==null && tradeAge<=quietTradeSec){
       freshEl.className="flowFresh delay";
       freshText.textContent="ORDER FLOW QUIET • "+tradeAge+"s";
     }else if(tradeAge!==null){
