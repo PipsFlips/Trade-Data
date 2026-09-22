@@ -1361,7 +1361,9 @@ function buildIndicatorPayload() {
         currentRTH:rthExact
       }
     },
-    bars5m:liveBars5m.slice(-400)
+    bars5m:liveBars5m.slice(-400),
+    bars1h:(latestSnapshot.bars?.oneHourRecent||[]).slice(-240),
+    bars1d:(latestSnapshot.bars?.dailyRecent||[]).slice(-60)
   };
 }
 
