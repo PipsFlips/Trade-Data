@@ -143,9 +143,13 @@ function loadState(){
 function pt(ts){return DateTime.fromISO(ts,{setZone:true}).setZone(ZONE);}
 function currentSessionKey(d){return (d.hour>=15?d.plus({days:1}):d).toISODate();}
 function ensureSessions(ts){
-  const d=pt(ts),sk=currentSessionKey(d),rd=d.toISODate();
+  const d=pt(ts),sk=currentSessionKey(d),rd=d.toISODate(),m=d.hour*60+d.minute;
   if(sk!==sessionKey){sessionKey=sk;sessionBuy=sessionSell=sessionPV=sessionVol=0;sessionProfile={};}
-  if(rd!==rthDate){rthDate=rd;rthBuy=rthSell=rthPV=rthVol=0;rthProfile={};}
+  // NY/RTH state begins at 06:30 PT. Do not roll it at midnight.
+  // The first trade in the new RTH window performs the reset.
+  if(m>=390&&m<780&&rd!==rthDate){
+    rthDate=rd;rthBuy=rthSell=rthPV=rthVol=0;rthProfile={};
+  }
 }
 function updateBucket(store,ts,d,mins){
   const k=bucketStartIso(ts,mins),p=+d.price,v=+d.volume||0,t=+d.type;
@@ -200,6 +204,8 @@ function arr(store,minutes){
   return Object.values(store).filter(x=>Date.parse(x.t)>=cut).sort((a,b)=>Date.parse(a.t)-Date.parse(b.t));
 }
 async function sendRelay(){
+  const nowPt=DateTime.now().setZone(ZONE),nowMins=nowPt.hour*60+nowPt.minute;
+  const rthActive=nowMins>=390&&nowMins<780&&rthDate===nowPt.toISODate();
   const body={
     receivedAt:new Date().toISOString(),
     lastTradeAt:lastTradeTs,
@@ -211,14 +217,15 @@ async function sendRelay(){
     oneMin:arr(oneMin,360),
     fiveMin:arr(fiveMin,720),
     currentGlobexDelta:sessionBuy-sessionSell,
-    currentRthDelta:rthBuy-rthSell,
+    currentRthDelta:rthActive?(rthBuy-rthSell):null,
     currentGlobexCvd:sessionBuy-sessionSell,
-    currentRthCvd:rthBuy-rthSell,
+    currentRthCvd:rthActive?(rthBuy-rthSell):null,
     sessionVwap:sessionVol?sessionPV/sessionVol:null,
-    rthVwap:rthVol?rthPV/rthVol:null,
+    rthVwap:rthActive&&rthVol?rthPV/rthVol:null,
+    rthActive,
     profiles:{
       session:finalizeProfile(sessionProfile),
-      rth:finalizeProfile(rthProfile)
+      rth:rthActive?finalizeProfile(rthProfile):null
     },
     collector:{
       startedAt:collectorStartedAt,
