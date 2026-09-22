@@ -1350,6 +1350,7 @@ function buildIndicatorPayload() {
     confirmedTraps:traps.slice(0,8),
     orderBlocks,
     icebergs:relayFresh?(relayState.icebergs||[]):[],
+    restingLiquidity:relayFresh?(relayState.restingLiquidity||{levels:[],events:[],threshold:null}):{levels:[],events:[],threshold:null},
     gaps,
     orb,
     signal,
