@@ -12,12 +12,12 @@ const DATA_DIR = process.env.DATA_DIR || "/data";
 const SNAPSHOT_INTERVAL_MS = Number(process.env.SNAPSHOT_INTERVAL_MS || 300000);
 const STATE_SAVE_MS = Number(process.env.STATE_SAVE_MS || 30000);
 const STATE_FILE = `${DATA_DIR}/trade-profile-state.json`;
-const MORNING_CUTOFF_FILE = `${DATA_DIR}/morning-cutoff-${MARKET_SYMBOL}.json`;
 const ZONE = "America/Los_Angeles";
 const ALERT_SCORE_THRESHOLD = Number(process.env.ALERT_SCORE_THRESHOLD || 55);
 const REALTIME_RELAY_TOKEN = process.env.REALTIME_RELAY_TOKEN || "";
 const DIRECT_TOPSTEP_REALTIME = String(process.env.DIRECT_TOPSTEP_REALTIME || "false").toLowerCase()==="true";
 const MARKET_SYMBOL = String(process.env.MARKET_SYMBOL || "MNQ").toUpperCase();
+const MORNING_CUTOFF_FILE = `${DATA_DIR}/morning-cutoff-${MARKET_SYMBOL}.json`;
 const MARKET_DESC = MARKET_SYMBOL==="MES" ? "MICRO E-MINI S&P" : "MICRO E-MINI NASDAQ";
 const MES_SERVICE_URL = process.env.MES_SERVICE_URL || "";
 const MARKET_PARAMS = MARKET_SYMBOL==="MES"
