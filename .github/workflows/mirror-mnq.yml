@@ -19,18 +19,23 @@ jobs:
         uses: actions/checkout@v4
 
       - name: Guard Pacific schedule
+        id: schedule_guard
         if: github.event_name == 'schedule'
         run: |
           PT_HOUR="$(TZ=America/Los_Angeles date +%H)"
           PT_DOW="$(TZ=America/Los_Angeles date +%u)"
           echo "Pacific hour: $PT_HOUR, weekday: $PT_DOW"
 
-          if [ "$PT_HOUR" != "05" ] || [ "$PT_DOW" -gt 5 ]; then
-            echo "Duplicate DST cron or non-weekday. Skipping."
-            exit 78
+          if [ "$PT_HOUR" = "05" ] && [ "$PT_DOW" -le 5 ]; then
+            echo "should_run=true" >> "$GITHUB_OUTPUT"
+            echo "In the intended 05:00 Pacific window."
+          else
+            echo "should_run=false" >> "$GITHUB_OUTPUT"
+            echo "Outside the intended 05:00 Pacific window. Skipping cleanly."
           fi
 
       - name: Fetch Railway MNQ morning JSON
+        if: github.event_name == 'workflow_dispatch' || steps.schedule_guard.outputs.should_run == 'true'
         run: |
           mkdir -p public mnq
 
@@ -68,6 +73,7 @@ jobs:
           cp /tmp/mnq-morning.json public/mnq-morning.json
 
       - name: Build static GitHub Pages HTML
+        if: github.event_name == 'workflow_dispatch' || steps.schedule_guard.outputs.should_run == 'true'
         run: |
           GENERATED_UTC="$(jq -r '.generatedUtc // .snapshot.generatedUtc' /tmp/mnq-morning.json)"
           GENERATED_PT="$(jq -r '.generatedPacific // .snapshot.generatedPacific // "unknown"' /tmp/mnq-morning.json)"
@@ -101,6 +107,7 @@ jobs:
           } > mnq/index.html
 
       - name: Commit mirrored market data
+        if: github.event_name == 'workflow_dispatch' || steps.schedule_guard.outputs.should_run == 'true'
         run: |
           git config user.name "mnq-mirror-bot"
           git config user.email "actions@users.noreply.github.com"
