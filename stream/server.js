@@ -1379,6 +1379,14 @@ function buildIndicatorPayload() {
   return {
     schemaVersion:"1.4",
     marketSymbol:MARKET_SYMBOL,
+    cutoff0530Pacific:(morningCutoff?.cutoffPacificDate===nowPT().toISODate())?{
+      cutoffPacificDate:morningCutoff.cutoffPacificDate,
+      cutoffTimePacific:morningCutoff.cutoffTimePacific,
+      capturedUtc:morningCutoff.capturedUtc,
+      capturedPacific:morningCutoff.capturedPacific,
+      collectorFreshAtCapture:morningCutoff.collectorFreshAtCapture,
+      indicator:morningCutoff.indicator
+    }:null,
     generatedUtc:DateTime.utc().toISO(),
     generatedPacific:nowPT().toISO(),
     connected,
