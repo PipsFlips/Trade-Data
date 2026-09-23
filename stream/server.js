@@ -12,6 +12,7 @@ const DATA_DIR = process.env.DATA_DIR || "/data";
 const SNAPSHOT_INTERVAL_MS = Number(process.env.SNAPSHOT_INTERVAL_MS || 300000);
 const STATE_SAVE_MS = Number(process.env.STATE_SAVE_MS || 30000);
 const STATE_FILE = `${DATA_DIR}/trade-profile-state.json`;
+const MORNING_CUTOFF_FILE = `${DATA_DIR}/morning-cutoff-${MARKET_SYMBOL}.json`;
 const ZONE = "America/Los_Angeles";
 const ALERT_SCORE_THRESHOLD = Number(process.env.ALERT_SCORE_THRESHOLD || 55);
 const REALTIME_RELAY_TOKEN = process.env.REALTIME_RELAY_TOKEN || "";
@@ -54,6 +55,8 @@ let reconnectCount = 0;
 let subscriptionResults = {quotes:null,trades:null,depth:null};
 let lastSignalAlert = {key:null,at:0};
 let relayState = null;
+let morningCutoff = null;
+let morningCutoffCaptureBusy = false;
 let signalStability = {setupKey:null,cvdAlignedSince:null,targetRoomAward:null};
 let actionableSignalState={active:null,pending:null,pendingSince:0,emptySince:0};
 let analysisDisplayState={active:null,pending:null,pendingSince:0};
@@ -1081,6 +1084,56 @@ function loadState() {
 }
 
 
+function loadMorningCutoff() {
+  if(!fs.existsSync(MORNING_CUTOFF_FILE)) return;
+  try{
+    const j=JSON.parse(fs.readFileSync(MORNING_CUTOFF_FILE,"utf8"));
+    if(j?.cutoffPacificDate) morningCutoff=j;
+  }catch(e){
+    console.warn("Could not load morning cutoff:",e.message);
+  }
+}
+
+function saveMorningCutoff(payload) {
+  const tmp=MORNING_CUTOFF_FILE+".tmp";
+  fs.writeFileSync(tmp,JSON.stringify(payload,null,2));
+  fs.renameSync(tmp,MORNING_CUTOFF_FILE);
+  morningCutoff=payload;
+}
+
+async function captureMorningCutoffIfDue() {
+  if(morningCutoffCaptureBusy) return;
+  const t=nowPT();
+  if(t.weekday>5 || t.hour!==5 || t.minute!==30) return;
+  const date=t.toISODate();
+  if(morningCutoff?.cutoffPacificDate===date) return;
+  morningCutoffCaptureBusy=true;
+  try{
+    // Refresh the slower historical/structure layer at the cutoff before freezing it.
+    await buildSnapshot();
+    const relayFresh=relayState && Date.now()-Date.parse(relayState.receivedAt)<10000;
+    const payload={
+      schemaVersion:"1.0",
+      marketSymbol:MARKET_SYMBOL,
+      cutoffPacificDate:date,
+      cutoffTimePacific:"05:30:00",
+      capturedUtc:DateTime.utc().toISO(),
+      capturedPacific:nowPT().toISO(),
+      contract:contract?{id:contract.id,name:contract.name,symbolId:contract.symbolId,tickSize:contract.tickSize,tickValue:contract.tickValue}:null,
+      collectorFreshAtCapture:Boolean(relayFresh),
+      snapshot:latestSnapshot,
+      indicator:buildIndicatorPayload(),
+      realtime:relayFresh?relayState:null
+    };
+    saveMorningCutoff(payload);
+    console.log("MORNING_CUTOFF_CAPTURED",MARKET_SYMBOL,payload.capturedPacific);
+  }catch(e){
+    console.error("MORNING_CUTOFF_CAPTURE_ERR",MARKET_SYMBOL,e.message);
+  }finally{
+    morningCutoffCaptureBusy=false;
+  }
+}
+
 /* ---------- live indicator engine ---------- */
 
 function exactVwapFromState(state) {
@@ -1546,6 +1599,7 @@ async function connectStream() {
 
 async function init() {
   loadState();
+  loadMorningCutoff();
   await authenticate();
   await findContract();
   await buildSnapshot();
@@ -1561,6 +1615,7 @@ async function init() {
   setInterval(()=>buildSnapshot().catch(e=>console.error("snapshot",e)),SNAPSHOT_INTERVAL_MS);
   setInterval(()=>saveState(false),STATE_SAVE_MS);
   setInterval(()=>getToken().catch(e=>console.error("token refresh",e)),3600000);
+  setInterval(()=>captureMorningCutoffIfDue().catch(e=>console.error("morning cutoff",e)),5000);
 }
 
 process.on("SIGTERM",()=>{ try{saveState(true);}finally{process.exit(0);} });
@@ -1577,6 +1632,14 @@ app.post("/realtime-relay",(req,res)=>{
   if(!b.receivedAt || !Array.isArray(b.oneMin) || !Array.isArray(b.fiveMin)) return res.status(400).json({ok:false,error:"invalid payload"});
   relayState=b;
   res.json({ok:true,receivedAt:b.receivedAt});
+});
+
+app.get("/morning-cutoff.json",(req,res)=>{
+  const today=nowPT().toISODate();
+  if(!morningCutoff || morningCutoff.cutoffPacificDate!==today){
+    return res.status(404).json({ok:false,error:"No 05:30 Pacific cutoff snapshot for today",marketSymbol:MARKET_SYMBOL,todayPacific:today});
+  }
+  res.json(morningCutoff);
 });
 
 app.get("/health",(req,res)=>res.json({
@@ -1641,12 +1704,15 @@ app.get("/mnq-profile.json",(req,res)=>res.redirect(307,"/profile.json"));
 app.get("/mnq-morning.json",(req,res)=>{
   const currentSession=currentTradingSessionDate();
   const priorRthDate=priorBusinessDateStr();
+  const today=nowPT().toISODate();
+  const cutoff=(morningCutoff?.cutoffPacificDate===today)?morningCutoff:null;
 
   res.json({
     generatedUtc:DateTime.utc().toISO(),
     generatedPacific:nowPT().toISO(),
-    snapshot:latestSnapshot,
-    realtime:{
+    cutoff0530Pacific:cutoff,
+    snapshot:cutoff?.snapshot||latestSnapshot,
+    realtime:cutoff?.realtime||{
       connected,
       lastTradeAt,
       currentTradingSessionDate:currentSession,
