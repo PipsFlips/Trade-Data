@@ -1163,6 +1163,102 @@ function uniqueLevels(levels,tick=0.25) {
   }
   return out.sort((a,b)=>b.priority-a.priority);
 }
+
+function calculateMarketStructure(bars5m,bars15m,sessionCvd){
+  const closed=(bars5m||[]).filter(b=>Date.parse(b.t)+300000<=Date.now()).slice(-36);
+  if(closed.length<12) return {state:"TRANSITION",score:0,direction:"NEUTRAL",reasons:["Waiting for enough completed 5m structure"],range:null,trend:null,metrics:{}};
+  const atr=current5mAtr(closed,20)||Math.max(1,median(closed.slice(-12).map(b=>+b.h-+b.l))||1);
+  const recent=closed.slice(-18);
+  const closes=recent.map(b=>+b.c);
+  const path=closes.slice(1).reduce((s,v,i)=>s+Math.abs(v-closes[i]),0);
+  const net=closes.at(-1)-closes[0];
+  const efficiency=path>0?Math.min(1,Math.abs(net)/path):0;
+
+  const n=closes.length, xm=(n-1)/2, ym=closes.reduce((s,x)=>s+x,0)/n;
+  let num=0,den=0;
+  for(let i=0;i<n;i++){num+=(i-xm)*(closes[i]-ym);den+=(i-xm)*(i-xm);}
+  const slope=den?num/den:0;
+  const normSlope=Math.min(1,Math.abs(slope)/(atr*.12||1));
+  const direction=slope>0?"UP":slope<0?"DOWN":"NEUTRAL";
+
+  const pivH=[],pivL=[];
+  for(let i=2;i<recent.length-2;i++){
+    const b=recent[i];
+    if(+b.h>+recent[i-1].h&&+b.h>=+recent[i+1].h&&+b.h>+recent[i-2].h&&+b.h>=+recent[i+2].h) pivH.push({i,price:+b.h,t:b.t});
+    if(+b.l<+recent[i-1].l&&+b.l<=+recent[i+1].l&&+b.l<+recent[i-2].l&&+b.l<=+recent[i+2].l) pivL.push({i,price:+b.l,t:b.t});
+  }
+  let structureDir="NEUTRAL";
+  if(pivH.length>=2&&pivL.length>=2){
+    const hh=pivH.at(-1).price>pivH.at(-2).price, hl=pivL.at(-1).price>pivL.at(-2).price;
+    const lh=pivH.at(-1).price<pivH.at(-2).price, ll=pivL.at(-1).price<pivL.at(-2).price;
+    if(hh&&hl) structureDir="UP"; else if(lh&&ll) structureDir="DOWN";
+  }
+
+  let overlap=0;
+  for(let i=1;i<recent.length;i++){
+    const a=recent[i-1],b=recent[i], inter=Math.max(0,Math.min(+a.h,+b.h)-Math.max(+a.l,+b.l));
+    const span=Math.max(+a.h,+b.h)-Math.min(+a.l,+b.l);
+    overlap+=span>0?inter/span:0;
+  }
+  overlap/=(recent.length-1);
+
+  const rvwap=(rows)=>{
+    let pv=0,v=0;
+    for(const b of rows){const vol=+b.v||0,tp=(+b.h+ +b.l+ +b.c)/3;pv+=tp*vol;v+=vol;}
+    return v?pv/v:null;
+  };
+  const vwNow=rvwap(recent.slice(-12)),vwPrev=rvwap(recent.slice(-18,-6));
+  const vwapSlope=Number.isFinite(vwNow)&&Number.isFinite(vwPrev)?vwNow-vwPrev:0;
+  const vwapAligned=Number.isFinite(vwNow)&&((direction==="UP"&&closes.at(-1)>vwNow&&vwapSlope>0)||(direction==="DOWN"&&closes.at(-1)<vwNow&&vwapSlope<0));
+
+  let crosses=0;
+  if(Number.isFinite(vwNow)) for(let i=1;i<recent.length;i++) if((+recent[i-1].c-vwNow)*(+recent[i].c-vwNow)<0) crosses++;
+  const crossScore=Math.min(1,crosses/5);
+
+  const r15=(bars15m||[]).filter(b=>Date.parse(b.t)+900000<=Date.now()).slice(-5);
+  let dir15="NEUTRAL";
+  if(r15.length>=4){const d=+r15.at(-1).c-+r15[0].c;if(Math.abs(d)>=atr*.5)dir15=d>0?"UP":"DOWN";}
+  const aligned15=direction!=="NEUTRAL"&&dir15===direction;
+
+  const rangeHigh=Math.max(...recent.map(b=>+b.h)),rangeLow=Math.min(...recent.map(b=>+b.l));
+  const rangeWidth=rangeHigh-rangeLow, widthAtr=rangeWidth/atr;
+  const compression=Math.max(0,Math.min(1,(5-widthAtr)/3));
+
+  let trend100=efficiency*35+normSlope*25+(structureDir===direction?20:structureDir==="NEUTRAL"?6:0)+(vwapAligned?10:0)+(aligned15?10:0);
+  if(direction==="NEUTRAL") trend100*=.5;
+  let range100=(1-efficiency)*30+overlap*25+crossScore*20+compression*15+(structureDir==="NEUTRAL"?10:2);
+  trend100=Math.max(0,Math.min(100,trend100));
+  range100=Math.max(0,Math.min(100,range100));
+
+  let state="TRANSITION",score=Math.max(trend100,range100),reasons=[];
+  if(trend100>=65&&trend100>=range100+8){
+    state=direction==="UP"?"TREND UP":"TREND DOWN";score=trend100;
+    reasons.push("directional efficiency "+Math.round(efficiency*100)+"%");
+    if(structureDir===direction) reasons.push(direction==="UP"?"5m HH/HL":"5m LH/LL");
+    if(vwapAligned) reasons.push("price and rolling VWAP aligned");
+    if(aligned15) reasons.push("15m structure aligned");
+  }else if(range100>=65&&range100>=trend100){
+    state="RANGE";score=range100;
+    reasons.push("high candle overlap");
+    if(crosses>=2) reasons.push(crosses+" VWAP crossings");
+    reasons.push("low directional efficiency");
+  }else{
+    reasons.push(trend100>range100?"trend evidence building":"range evidence building");
+    if(structureDir!=="NEUTRAL") reasons.push("5m structure "+structureDir.toLowerCase());
+  }
+
+  const trendStart=recent[0],trendEnd=recent.at(-1);
+  const startFit=ym+slope*(0-xm),endFit=ym+slope*((n-1)-xm);
+  return {
+    state,score:+(score/10).toFixed(1),direction,
+    trendScore:+(trend100/10).toFixed(1),rangeScore:+(range100/10).toFixed(1),
+    reasons,
+    range:{low:+rangeLow.toFixed(2),high:+rangeHigh.toFixed(2),mid:+((rangeLow+rangeHigh)/2).toFixed(2),width:+rangeWidth.toFixed(2),widthAtr:+widthAtr.toFixed(2),startTime:recent[0].t,endTime:recent.at(-1).t},
+    trend:{startTime:trendStart.t,endTime:trendEnd.t,startPrice:+startFit.toFixed(2),endPrice:+endFit.toFixed(2),structureDirection:structureDir},
+    metrics:{efficiency:+efficiency.toFixed(3),overlap:+overlap.toFixed(3),vwapCrosses:crosses,normalizedSlope:+normSlope.toFixed(3),direction15m:dir15,sessionCvd:Number.isFinite(+sessionCvd)?+sessionCvd:null}
+  };
+}
+
 function buildIndicatorPayload() {
   if(!latestSnapshot||!contract) return {};
   const a=latestSnapshot.analytics||{}, tick=+contract.tickSize||0.25;
@@ -1348,6 +1444,9 @@ function buildIndicatorPayload() {
   const bars5m=liveBars5m;
   const bars15m=aggregateBars(bars5m,15);
   const flow15m=aggregateBars(f5,15);
+  const marketStructure=calculateMarketStructure(
+    bars5m,bars15m,relayFresh?relayState.currentGlobexCvd:(globexExact?.cvd??null)
+  );
   const orderBlocks=detectOrderBlocks(
     bars15m,levels,flow15m,currentPrice,rthVwap,globexVwap,15
   );
@@ -1377,7 +1476,7 @@ function buildIndicatorPayload() {
   maybeSendSignalAlert(signal,currentPrice);
 
   return {
-    schemaVersion:"1.4",
+    schemaVersion:"1.5",
     marketSymbol:MARKET_SYMBOL,
     cutoff0530Pacific:(morningCutoff?.cutoffPacificDate===nowPT().toISODate())?{
       cutoffPacificDate:morningCutoff.cutoffPacificDate,
@@ -1416,6 +1515,7 @@ function buildIndicatorPayload() {
     orb,
     signal,
     analysis,
+    marketStructure,
     volatility:{atr5m20:current5mAtr(liveBars5m,20),atr14Daily:latestSnapshot.analytics?.volatility?.ATR14Daily??null},
     diagnostics:{tradeEventsReceived,tradeEventsMatched,quoteEventsReceived,depthEventsReceived,lastRawTradeEvent,lastRawQuoteEvent,lastRawDepthEvent,reconnectCount,subscriptionResults,relayFresh:Boolean(relayFresh),relayReceivedAt:relayState?.receivedAt||null,lastTradeAt:relayState?.lastTradeAt||lastTradeAt||null,lastTradeReceivedAt:relayState?.lastTradeReceivedAt||null,lastQuoteReceivedAt:relayState?.lastQuoteReceivedAt||null,lastDepthReceivedAt:relayState?.lastDepthReceivedAt||null,alertScoreThreshold:ALERT_SCORE_THRESHOLD,smsConfigured:Boolean(ALERT_SMS_TO&&TWILIO_ACCOUNT_SID&&TWILIO_AUTH_TOKEN&&TWILIO_FROM_NUMBER)},
     profiles:{currentGlobex:globexExact,currentRTH:rthExact},
