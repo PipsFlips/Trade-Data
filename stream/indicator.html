@@ -65,6 +65,7 @@ canvas{display:block;width:100%;height:410px;border-radius:8px;background:#0d131
 .setupLine{font-size:11px;line-height:1.35;color:#c9d2dc;margin-top:3px}
 .setupLine b{color:var(--muted);font-weight:650}
 .analysisNote{font-size:9px;color:var(--muted);margin-top:7px}
+.structureBox{background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:9px;margin:0 0 9px}.structureHead{display:flex;align-items:center;justify-content:space-between;gap:8px}.structureTitle{font-size:12px;font-weight:850;color:#cbd5df;text-transform:uppercase;letter-spacing:.06em}.structureState{font-size:11px;font-weight:900;border-radius:999px;padding:5px 9px;border:1px solid var(--line);background:var(--panel2)}.structureState.up{color:var(--green);border-color:rgba(49,196,141,.45)}.structureState.down{color:var(--red);border-color:rgba(240,101,101,.45)}.structureState.range{color:#57a4ff;border-color:rgba(87,164,255,.45)}.structureState.transition{color:var(--amber);border-color:rgba(242,184,75,.45)}.structureMeta{font-size:11px;color:#c9d2dc;margin-top:6px;line-height:1.4}.structureSub{font-size:9px;color:var(--muted);margin-top:5px}
 .dot{display:inline-block;width:7px;height:7px;border-radius:50%;margin-right:5px;background:var(--muted)}
 .dot.buy{background:var(--green)} .dot.sell{background:var(--red)}
 .status{font-size:11px;color:var(--muted);text-align:center;padding:4px 0}
@@ -103,7 +104,7 @@ canvas{display:block;width:100%;height:410px;border-radius:8px;background:#0d131
     </div>
     <div class="signal">
       <div class="s neutral" id="signal">NEUTRAL</div>
-      <div class="score" id="score">0 score</div>
+      <div class="score" id="score">0.0/10</div>
     </div>
   </div>
 
@@ -112,6 +113,15 @@ canvas{display:block;width:100%;height:410px;border-radius:8px;background:#0d131
     <div class="card"><div class="k">5m Δ</div><div class="v" id="delta5">—</div></div>
     <div class="card"><div class="k">Raw Session CVD</div><div class="v" id="sessionCvd">—</div></div>
     <div class="card"><div class="k">Raw NY CVD</div><div class="v" id="cvd">—</div></div>
+  </div>
+
+  <div class="structureBox" id="marketStructureBox">
+    <div class="structureHead">
+      <div class="structureTitle">Market Structure</div>
+      <div class="structureState transition" id="structureState">TRANSITION · 0.0/10</div>
+    </div>
+    <div class="structureMeta" id="structureMeta">Waiting for enough completed 5-minute structure.</div>
+    <div class="structureSub" id="structureSub">Score = weighted evidence alignment, not a probability.</div>
   </div>
 
   <div class="chartCard">
@@ -139,6 +149,7 @@ canvas{display:block;width:100%;height:410px;border-radius:8px;background:#0d131
       <button class="layerbtn active" data-layer="vwap">VWAP</button>
       <button class="layerbtn active" data-layer="traps">Traps</button>
       <button class="layerbtn active" data-layer="liquidity">Liquidity</button>
+      <button class="layerbtn active" data-layer="structure">Structure</button>
     </div>
     <div style="display:flex;gap:12px;align-items:center;margin:0 0 5px 2px;font-size:9px;color:var(--muted)">
       <span><i style="display:inline-block;width:12px;border-top:1px dotted #f2c94c;vertical-align:middle;margin-right:4px"></i>Asia 17:00</span>
@@ -193,9 +204,15 @@ canvas{display:block;width:100%;height:410px;border-radius:8px;background:#0d131
     <summary class="legendMasterSummary">Chart legend / how the system is coded</summary>
     <div class="legend">
       <details>
-        <summary>1m Delta, 5m Delta, Session CVD, NY CVD</summary>
+        <summary>0–10 weighted evidence score</summary>
         <div class="legendBody">
-          <b>Delta</b> is aggressive buy volume minus aggressive sell volume for the bar. Positive means more contracts traded at the offer; negative means more traded at the bid. <b>1m Delta</b> and <b>5m Delta</b> are the current local order-flow buckets. <b>Session CVD</b> is cumulative delta for the CME session beginning at 15:00 PT. <b>NY CVD</b> is cumulative delta for RTH only, 06:30–13:00 PT, and is hidden outside that window.
+          Scores are displayed on a <b>0–10 scale</b>. A score such as <b>8.5/10</b> means the system's weighted inputs are strongly aligned with that move, setup, or structure. It is <b>not a probability of success</b>. Internal component weights are normalized to the 0–10 display scale.
+        </div>
+      </details>
+      <details>
+        <summary>1m Delta, 5m Delta, Raw Session CVD, Raw NY CVD</summary>
+        <div class="legendBody">
+          <b>Delta</b> is aggressive buy volume minus aggressive sell volume for the bar. Positive means more contracts traded at the offer; negative means more traded at the bid. <b>1m Delta</b> and <b>5m Delta</b> are the current local order-flow buckets. <b>Raw Session CVD</b> is cumulative API trade-side delta for the CME session beginning at 15:00 PT. <b>Raw NY CVD</b> is the same calculation for RTH only, 06:30–13:00 PT, and is hidden outside that window.
         </div>
       </details>
       <details>
@@ -232,6 +249,12 @@ canvas{display:block;width:100%;height:410px;border-radius:8px;background:#0d131
         <summary>1H pivot levels</summary>
         <div class="legendBody">
           A 1-hour pivot is a local swing high or swing low detected against the two hourly bars on each side. Untouched pivots receive more weight. The significance score also considers later excursion, distance from current price, and age. Only the stronger unswept pivots are promoted to chart levels.
+        </div>
+      </details>
+      <details>
+        <summary>Market Structure — Trend / Range / Transition</summary>
+        <div class="legendBody">
+          Market Structure uses completed 5-minute price action with 15-minute confirmation. The trend score weights directional efficiency, normalized slope, HH/HL or LH/LL structure, rolling VWAP alignment, and 15-minute agreement. The range score weights low directional efficiency, candle overlap, VWAP crossings, compressed range width relative to ATR, and neutral swing structure. <b>RANGE</b> is drawn as a horizontal shaded box. <b>TREND UP/DOWN</b> is drawn with a directional structure guide. <b>TRANSITION</b> means neither side has enough aligned evidence yet.
         </div>
       </details>
       <details>
@@ -389,7 +412,7 @@ const levelColor=l=>{
 let chartBarCount=48;
 let chartMode="intraday";
 let lastData=null;
-const defaultChartLayers={sessions:true,prior:true,profiles:true,pivots:true,ob:true,orb:true,vwap:true,traps:true,liquidity:true};
+const defaultChartLayers={sessions:true,prior:true,profiles:true,pivots:true,ob:true,orb:true,vwap:true,traps:true,liquidity:true,structure:true};
 let chartLayers={...defaultChartLayers};
 try{
   const saved=JSON.parse(localStorage.getItem("mnqChartLayers")||"null");
@@ -545,6 +568,41 @@ function drawChart(data){
     ctx.restore();
   }
 
+  // Market Structure overlay. Range = horizontal box; trend = fitted directional structure line.
+  if(barKind==="5m" && chartLayers.structure!==false && data.marketStructure){
+    const ms=data.marketStructure;
+    if(ms.state==="RANGE" && ms.range){
+      const lo=+ms.range.low,hi=+ms.range.high;
+      if(Number.isFinite(lo)&&Number.isFinite(hi)&&hi>=min&&lo<=max){
+        let i1=bars.findIndex(b=>Date.parse(b.t)>=Date.parse(ms.range.startTime));
+        if(i1<0)i1=0;
+        const xx1=Math.max(left,x(i1)-cw/bars.length/2),xx2=w-right;
+        const yy1=y(Math.min(max,hi)),yy2=y(Math.max(min,lo));
+        ctx.save();
+        ctx.fillStyle="rgba(87,164,255,.07)";ctx.strokeStyle="rgba(87,164,255,.55)";ctx.lineWidth=1.2;ctx.setLineDash([7,5]);
+        ctx.fillRect(xx1,Math.min(yy1,yy2),xx2-xx1,Math.abs(yy2-yy1));
+        ctx.strokeRect(xx1,Math.min(yy1,yy2),xx2-xx1,Math.abs(yy2-yy1));
+        ctx.setLineDash([]);
+        const mid=+ms.range.mid;if(Number.isFinite(mid)){ctx.globalAlpha=.35;ctx.beginPath();ctx.moveTo(xx1,y(mid));ctx.lineTo(xx2,y(mid));ctx.stroke();}
+        ctx.restore();
+        ctx.font="bold 9px -apple-system,BlinkMacSystemFont,Segoe UI,Arial";ctx.textAlign="left";ctx.fillStyle="#57a4ff";
+        ctx.fillText("RANGE "+Number(ms.score||0).toFixed(1)+"/10",xx1+5,Math.max(top+11,Math.min(yy1,yy2)-5));
+      }
+    }else if((ms.state==="TREND UP"||ms.state==="TREND DOWN") && ms.trend){
+      let i1=bars.findIndex(b=>Date.parse(b.t)>=Date.parse(ms.trend.startTime));
+      let i2=bars.findIndex(b=>Date.parse(b.t)>=Date.parse(ms.trend.endTime));
+      if(i1<0)i1=0;if(i2<0)i2=bars.length-1;
+      const p1=+ms.trend.startPrice,p2=+ms.trend.endPrice;
+      if(Number.isFinite(p1)&&Number.isFinite(p2)){
+        const col=ms.state==="TREND UP"?"#31c48d":"#f06565";
+        ctx.save();ctx.strokeStyle=col;ctx.globalAlpha=.8;ctx.lineWidth=2;ctx.setLineDash([9,5]);
+        ctx.beginPath();ctx.moveTo(x(i1),y(p1));ctx.lineTo(x(i2),y(p2));ctx.stroke();ctx.restore();
+        ctx.font="bold 9px -apple-system,BlinkMacSystemFont,Segoe UI,Arial";ctx.textAlign="left";ctx.fillStyle=col;
+        ctx.fillText(ms.state+" "+Number(ms.score||0).toFixed(1)+"/10",Math.min(w-right-105,x(i1)+5),Math.max(top+12,y(p1)-7));
+      }
+    }
+  }
+
   // Candles first
   const bw=Math.max(3,Math.min(9,cw/bars.length*.64));
   bars.forEach((b,i)=>{
@@ -626,7 +684,7 @@ function drawChart(data){
     ctx.strokeStyle=edge;ctx.globalAlpha=.8;ctx.setLineDash([4,4]);
     ctx.strokeRect(x1,Math.min(yy1,yy2),(w-right)-x1,Math.abs(yy2-yy1));
     ctx.setLineDash([]);ctx.globalAlpha=1;
-    const tag="15m OB "+ob.score;
+    const tag="15m OB "+(Number(ob.score||0)/10).toFixed(1)+"/10";
     ctx.font="bold 9px -apple-system,BlinkMacSystemFont,Segoe UI,Arial";
     ctx.textAlign="left";
     // Put the score about two chart bars inside the OB rectangle.
@@ -765,7 +823,7 @@ function renderIcebergs(data){
   el.innerHTML=xs.map(x=>{
     const cls=x.side==="BUY"?"buy":"sell";
     const label=x.side==="BUY"?"BUY ICEBERG":"SELL ICEBERG";
-    return '<div class="row"><span><i class="dot '+cls+'"></i>'+label+' · '+Math.round(+x.score||0)+'/100</span>'+
+    return '<div class="row"><span><i class="dot '+cls+'"></i>'+label+' · '+(Number(x.score||0)/10).toFixed(1)+'/10</span>'+
       '<b class="'+cls+'">'+fmt(x.price)+'</b>'+
       '<span style="display:none"></span></div>';
   }).join("")||'<div class="reason">No probable iceberg absorption detected.</div>';
@@ -792,6 +850,20 @@ function renderRestingLiquidity(data){
   }
 }
 
+function renderMarketStructure(data){
+  const ms=data.marketStructure||{};
+  const state=ms.state||"TRANSITION",score=Number.isFinite(+ms.score)?(+ms.score).toFixed(1):"0.0";
+  const el=document.getElementById("structureState");
+  const cls=state==="TREND UP"?"up":state==="TREND DOWN"?"down":state==="RANGE"?"range":"transition";
+  el.textContent=state+" · "+score+"/10";
+  el.className="structureState "+cls;
+  const reasons=(ms.reasons||[]).join(" · ");
+  let detail=reasons||"Waiting for enough completed 5-minute structure.";
+  if(state==="RANGE"&&ms.range) detail+=" · "+fmt(ms.range.low)+"–"+fmt(ms.range.high)+" · "+Number(ms.range.width||0).toFixed(1)+" pts";
+  document.getElementById("structureMeta").textContent=detail;
+  document.getElementById("structureSub").textContent="Trend "+Number(ms.trendScore||0).toFixed(1)+"/10 · Range "+Number(ms.rangeScore||0).toFixed(1)+"/10 · score is weighted evidence alignment, not probability.";
+}
+
 function renderAnalysis(data){
   const a=data.analysis||{};
   const pill=document.getElementById("biasPill");
@@ -804,7 +876,7 @@ function renderAnalysis(data){
   el.innerHTML=rows.map(x=>{
     const side=x.side||"WATCH";
     const cls=side==="BUY"?"buy":side==="SELL"?"sell":"neutral";
-    const q=Number.isFinite(+x.quality)?" · "+Math.round(+x.quality)+"/100":"";
+    const q=Number.isFinite(+x.quality)?" · "+(+x.quality/10).toFixed(1)+"/10":"";
     return '<div class="setup">'+
       '<div class="setupTitle"><span>'+x.title+'</span><span class="setupSide '+cls+'">'+side+q+'</span></div>'+
       '<div class="setupLine"><b>Trigger:</b> '+x.trigger+'</div>'+
@@ -869,9 +941,9 @@ async function refresh(){
     document.getElementById("cvd").className="v "+(rthActive&&+cvd>0?"buy":rthActive&&+cvd<0?"sell":"");
     const sig=d.signal?.side||"NEUTRAL", se=document.getElementById("signal");
     se.textContent=sig;se.className="s "+(sig==="BUY"?"buy":sig==="SELL"?"sell":"neutral");
-    document.getElementById("score").textContent=(d.signal?.score||0)+"/100";
+    document.getElementById("score").textContent=(Number(d.signal?.score||0)/10).toFixed(1)+"/10";
     document.getElementById("reason").textContent=(d.signal?.reasons||[]).join(" • ")||"No confirmed trap signal yet.";
-    renderAnalysis(d);renderIcebergs(d);renderRestingLiquidity(d);nearestLevels(d);trapRows(d);renderGaps(d);drawChart(d);
+    renderMarketStructure(d);renderAnalysis(d);renderIcebergs(d);renderRestingLiquidity(d);nearestLevels(d);trapRows(d);renderGaps(d);drawChart(d);
     status.textContent=(d.connected?"Live feed connected":"Feed reconnecting")+" · auto refresh 2s";
   }catch(e){
     status.textContent="Indicator error: "+e.message;
@@ -888,7 +960,7 @@ document.querySelectorAll(".marketbtn").forEach(btn=>{
     document.getElementById("contract").textContent=activeMarket;
     document.getElementById("price").textContent="—";
     document.getElementById("signal").textContent="NEUTRAL";
-    document.getElementById("score").textContent="0/100";
+    document.getElementById("score").textContent="0.0/10";
     refresh();
   });
 });
