@@ -1249,12 +1249,31 @@ function calculateMarketStructure(bars5m,bars15m,sessionCvd){
 
   const trendStart=recent[0],trendEnd=recent.at(-1);
   const startFit=ym+slope*(0-xm),endFit=ym+slope*((n-1)-xm);
+
+  // Adaptive regression channel. Residual dispersion sets the natural width;
+  // ATR provides a floor so quiet periods do not collapse the channel.
+  const residuals=closes.map((v,i)=>v-(ym+slope*(i-xm)));
+  const residualMean=residuals.reduce((s,x)=>s+x,0)/residuals.length;
+  const residualSigma=Math.sqrt(residuals.reduce((s,x)=>s+Math.pow(x-residualMean,2),0)/residuals.length);
+  const sigmaMult=1.75;
+  const minHalfWidth=atr*.35;
+  const channelHalfWidth=Math.max(minHalfWidth,residualSigma*sigmaMult);
+  const upperStart=startFit+channelHalfWidth,upperEnd=endFit+channelHalfWidth;
+  const lowerStart=startFit-channelHalfWidth,lowerEnd=endFit-channelHalfWidth;
+
   return {
     state,score:+(score/10).toFixed(1),direction,
     trendScore:+(trend100/10).toFixed(1),rangeScore:+(range100/10).toFixed(1),
     reasons,
     range:{low:+rangeLow.toFixed(2),high:+rangeHigh.toFixed(2),mid:+((rangeLow+rangeHigh)/2).toFixed(2),width:+rangeWidth.toFixed(2),widthAtr:+widthAtr.toFixed(2),startTime:recent[0].t,endTime:recent.at(-1).t},
-    trend:{startTime:trendStart.t,endTime:trendEnd.t,startPrice:+startFit.toFixed(2),endPrice:+endFit.toFixed(2),structureDirection:structureDir},
+    trend:{
+      startTime:trendStart.t,endTime:trendEnd.t,
+      startPrice:+startFit.toFixed(2),endPrice:+endFit.toFixed(2),
+      upperStart:+upperStart.toFixed(2),upperEnd:+upperEnd.toFixed(2),
+      lowerStart:+lowerStart.toFixed(2),lowerEnd:+lowerEnd.toFixed(2),
+      halfWidth:+channelHalfWidth.toFixed(2),residualSigma:+residualSigma.toFixed(2),
+      sigmaMultiplier:sigmaMult,structureDirection:structureDir
+    },
     metrics:{efficiency:+efficiency.toFixed(3),overlap:+overlap.toFixed(3),vwapCrosses:crosses,normalizedSlope:+normSlope.toFixed(3),direction15m:dir15,sessionCvd:Number.isFinite(+sessionCvd)?+sessionCvd:null}
   };
 }
