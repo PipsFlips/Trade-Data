@@ -254,7 +254,7 @@ canvas{display:block;width:100%;height:410px;border-radius:8px;background:#0d131
       <details>
         <summary>Market Structure — Trend / Range / Transition</summary>
         <div class="legendBody">
-          Market Structure uses completed 5-minute price action with 15-minute confirmation. The trend score weights directional efficiency, normalized slope, HH/HL or LH/LL structure, rolling VWAP alignment, and 15-minute agreement. The range score weights low directional efficiency, candle overlap, VWAP crossings, compressed range width relative to ATR, and neutral swing structure. <b>RANGE</b> is drawn as a horizontal shaded box. <b>TREND UP/DOWN</b> is drawn with a directional structure guide. <b>TRANSITION</b> means neither side has enough aligned evidence yet.
+          Market Structure uses completed 5-minute price action with 15-minute confirmation. The trend score weights directional efficiency, normalized slope, HH/HL or LH/LL structure, rolling VWAP alignment, and 15-minute agreement. The range score weights low directional efficiency, candle overlap, VWAP crossings, compressed range width relative to ATR, and neutral swing structure. <b>RANGE</b> is drawn as a horizontal shaded box. <b>TREND UP/DOWN</b> is drawn as an adaptive regression channel: the centerline is the recent 5-minute regression fit, while the parallel upper/lower bands use 1.75× residual standard deviation with an ATR-based minimum width. <b>TRANSITION</b> means neither side has enough aligned evidence yet.
         </div>
       </details>
       <details>
@@ -592,13 +592,28 @@ function drawChart(data){
       let i1=bars.findIndex(b=>Date.parse(b.t)>=Date.parse(ms.trend.startTime));
       let i2=bars.findIndex(b=>Date.parse(b.t)>=Date.parse(ms.trend.endTime));
       if(i1<0)i1=0;if(i2<0)i2=bars.length-1;
-      const p1=+ms.trend.startPrice,p2=+ms.trend.endPrice;
-      if(Number.isFinite(p1)&&Number.isFinite(p2)){
+      const mid1=+ms.trend.startPrice,mid2=+ms.trend.endPrice;
+      const up1=+ms.trend.upperStart,up2=+ms.trend.upperEnd;
+      const lo1=+ms.trend.lowerStart,lo2=+ms.trend.lowerEnd;
+      if([mid1,mid2,up1,up2,lo1,lo2].every(Number.isFinite)){
         const col=ms.state==="TREND UP"?"#31c48d":"#f06565";
-        ctx.save();ctx.strokeStyle=col;ctx.globalAlpha=.8;ctx.lineWidth=2;ctx.setLineDash([9,5]);
-        ctx.beginPath();ctx.moveTo(x(i1),y(p1));ctx.lineTo(x(i2),y(p2));ctx.stroke();ctx.restore();
+        const xx1=x(i1),xx2=x(i2);
+        ctx.save();
+        ctx.fillStyle=ms.state==="TREND UP"?"rgba(49,196,141,.07)":"rgba(240,101,101,.07)";
+        ctx.beginPath();
+        ctx.moveTo(xx1,y(up1));ctx.lineTo(xx2,y(up2));ctx.lineTo(xx2,y(lo2));ctx.lineTo(xx1,y(lo1));ctx.closePath();ctx.fill();
+
+        ctx.strokeStyle=col;ctx.globalAlpha=.55;ctx.lineWidth=1.2;ctx.setLineDash([7,5]);
+        ctx.beginPath();ctx.moveTo(xx1,y(up1));ctx.lineTo(xx2,y(up2));ctx.stroke();
+        ctx.beginPath();ctx.moveTo(xx1,y(lo1));ctx.lineTo(xx2,y(lo2));ctx.stroke();
+
+        ctx.globalAlpha=.9;ctx.lineWidth=2;ctx.setLineDash([]);
+        ctx.beginPath();ctx.moveTo(xx1,y(mid1));ctx.lineTo(xx2,y(mid2));ctx.stroke();
+        ctx.restore();
+
         ctx.font="bold 9px -apple-system,BlinkMacSystemFont,Segoe UI,Arial";ctx.textAlign="left";ctx.fillStyle=col;
-        ctx.fillText(ms.state+" "+Number(ms.score||0).toFixed(1)+"/10",Math.min(w-right-105,x(i1)+5),Math.max(top+12,y(p1)-7));
+        const labelY=ms.state==="TREND UP"?Math.min(y(up2)-5,y(mid2)-7):Math.max(top+12,y(lo2)+12);
+        ctx.fillText(ms.state+" "+Number(ms.score||0).toFixed(1)+"/10",Math.max(left+4,Math.min(w-right-110,xx2-105)),Math.max(top+12,Math.min(top+ch-8,labelY)));
       }
     }
   }
