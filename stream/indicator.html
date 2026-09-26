@@ -66,6 +66,7 @@ canvas{display:block;width:100%;height:410px;border-radius:8px;background:#0d131
 .setupLine b{color:var(--muted);font-weight:650}
 .analysisNote{font-size:9px;color:var(--muted);margin-top:7px}
 .structureBox{background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:9px;margin:0 0 9px}.structureHead{display:flex;align-items:center;justify-content:space-between;gap:8px}.structureTitle{font-size:12px;font-weight:850;color:#cbd5df;text-transform:uppercase;letter-spacing:.06em}.structureState{font-size:11px;font-weight:900;border-radius:999px;padding:5px 9px;border:1px solid var(--line);background:var(--panel2)}.structureState.up{color:var(--green);border-color:rgba(49,196,141,.45)}.structureState.down{color:var(--red);border-color:rgba(240,101,101,.45)}.structureState.range{color:#57a4ff;border-color:rgba(87,164,255,.45)}.structureState.transition{color:var(--amber);border-color:rgba(242,184,75,.45)}.structureMeta{font-size:11px;color:#c9d2dc;margin-top:6px;line-height:1.4}.structureSub{font-size:9px;color:var(--muted);margin-top:5px}
+.closePressureBox{display:none;background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:8px 9px;margin:0 0 9px}.closePressureHead{display:flex;align-items:center;justify-content:space-between;gap:8px}.closePressureTitle{font-size:11px;font-weight:850;color:#cbd5df;text-transform:uppercase;letter-spacing:.06em}.closePressureState{font-size:10px;font-weight:900;border-radius:999px;padding:4px 8px;border:1px solid var(--line);background:var(--panel2)}.closePressureState.buy{color:var(--green);border-color:rgba(49,196,141,.45)}.closePressureState.sell{color:var(--red);border-color:rgba(240,101,101,.45)}.closePressureState.balanced{color:var(--amber);border-color:rgba(242,184,75,.45)}.closePressureMeta{font-size:10px;color:#c9d2dc;margin-top:5px;line-height:1.35}.closePressureNote{font-size:8px;color:var(--muted);margin-top:4px}
 .dot{display:inline-block;width:7px;height:7px;border-radius:50%;margin-right:5px;background:var(--muted)}
 .dot.buy{background:var(--green)} .dot.sell{background:var(--red)}
 .status{font-size:11px;color:var(--muted);text-align:center;padding:4px 0}
@@ -122,6 +123,15 @@ canvas{display:block;width:100%;height:410px;border-radius:8px;background:#0d131
     </div>
     <div class="structureMeta" id="structureMeta">Waiting for enough completed 5-minute structure.</div>
     <div class="structureSub" id="structureSub">Score = weighted evidence alignment, not a probability.</div>
+  </div>
+
+  <div class="closePressureBox" id="closePressureBox">
+    <div class="closePressureHead">
+      <div class="closePressureTitle">Close Pressure</div>
+      <div class="closePressureState balanced" id="closePressureState">BALANCED · 0.0/10</div>
+    </div>
+    <div class="closePressureMeta" id="closePressureMeta"></div>
+    <div class="closePressureNote">12:30–1:00 PM PT only · collector-derived proxy, not exchange MOC imbalance.</div>
   </div>
 
   <div class="chartCard">
@@ -249,6 +259,12 @@ canvas{display:block;width:100%;height:410px;border-radius:8px;background:#0d131
         <summary>1H pivot levels</summary>
         <div class="legendBody">
           A 1-hour pivot is a local swing high or swing low detected against the two hourly bars on each side. Untouched pivots receive more weight. The significance score also considers later excursion, distance from current price, and age. Only the stronger unswept pivots are promoted to chart levels.
+        </div>
+      </details>
+      <details>
+        <summary>Close Pressure — final 30 minutes</summary>
+        <div class="legendBody">
+          Visible only from <b>12:30–13:00 PT</b>. This is a collector-derived closing-pressure proxy, <b>not exchange MOC imbalance data</b>. The 0–10 score weights recent 1-minute delta, delta acceleration, price displacement versus ATR, NY VWAP location, nearby visible bid/ask liquidity, and inferred iceberg/absorption activity. BUY/SELL indicates directional pressure; BALANCED means the evidence is not sufficiently one-sided.
         </div>
       </details>
       <details>
@@ -865,6 +881,19 @@ function renderRestingLiquidity(data){
   }
 }
 
+function renderClosePressure(data){
+  const cp=data.closePressure||{},box=document.getElementById("closePressureBox");
+  if(!box) return;
+  if(cp.active!==true){box.style.display="none";return;}
+  box.style.display="block";
+  const state=cp.state||"BALANCED",score=Number.isFinite(+cp.score)?(+cp.score).toFixed(1):"0.0";
+  const el=document.getElementById("closePressureState");
+  el.textContent=state+" · "+score+"/10";
+  el.className="closePressureState "+(state==="BUY"?"buy":state==="SELL"?"sell":"balanced");
+  const delta=Number.isFinite(+cp.delta30)?((+cp.delta30>0?"+":"")+nfmt(cp.delta30)+" Δ30m"):"";
+  document.getElementById("closePressureMeta").textContent=[delta,(cp.reasons||[]).join(" · ")].filter(Boolean).join(" · ")||"Waiting for enough closing-window order flow.";
+}
+
 function renderMarketStructure(data){
   const ms=data.marketStructure||{};
   const state=ms.state||"TRANSITION",score=Number.isFinite(+ms.score)?(+ms.score).toFixed(1):"0.0";
@@ -958,7 +987,7 @@ async function refresh(){
     se.textContent=sig;se.className="s "+(sig==="BUY"?"buy":sig==="SELL"?"sell":"neutral");
     document.getElementById("score").textContent=(Number(d.signal?.score||0)/10).toFixed(1)+"/10";
     document.getElementById("reason").textContent=(d.signal?.reasons||[]).join(" • ")||"No confirmed trap signal yet.";
-    renderMarketStructure(d);renderAnalysis(d);renderIcebergs(d);renderRestingLiquidity(d);nearestLevels(d);trapRows(d);renderGaps(d);drawChart(d);
+    renderClosePressure(d);renderMarketStructure(d);renderAnalysis(d);renderIcebergs(d);renderRestingLiquidity(d);nearestLevels(d);trapRows(d);renderGaps(d);drawChart(d);
     status.textContent=(d.connected?"Live feed connected":"Feed reconnecting")+" · auto refresh 2s";
   }catch(e){
     status.textContent="Indicator error: "+e.message;
