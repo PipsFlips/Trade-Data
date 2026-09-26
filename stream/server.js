@@ -1278,6 +1278,67 @@ function calculateMarketStructure(bars5m,bars15m,sessionCvd){
   };
 }
 
+
+function calculateClosePressure({f1,bars5m,currentPrice,rthVwap,restingLiquidity,icebergs}){
+  const pt=nowPT(),mins=pt.hour*60+pt.minute;
+  const active=pt.weekday<=5 && mins>=750 && mins<780; // 12:30-13:00 PT only
+  if(!active) return {active:false,startPacific:"12:30",endPacific:"13:00",label:"CLOSE PRESSURE"};
+
+  const rows=(f1||[]).filter(b=>Date.parse(b.t)+60000<=Date.now()).slice(-30);
+  if(rows.length<5) return {active:true,state:"BALANCED",score:0,reasons:["Waiting for enough closing-window order flow"],startPacific:"12:30",endPacific:"13:00",label:"CLOSE PRESSURE"};
+
+  const sum=(xs,k)=>xs.reduce((s,x)=>s+(+x[k]||0),0);
+  const delta30=sum(rows,"delta"),vol30=Math.max(1,sum(rows,"volume")||sum(rows,"v"));
+  const ratio=Math.max(-1,Math.min(1,delta30/vol30));
+  let signed=ratio*175; // ~20% delta/volume ratio contributes about 35 points.
+  const reasons=[];
+
+  const recent=rows.slice(-10),prior=rows.slice(0,Math.max(1,rows.length-10));
+  const recentRate=sum(recent,"delta")/Math.max(1,recent.length);
+  const priorRate=sum(prior,"delta")/Math.max(1,prior.length);
+  const accel=(recentRate-priorRate)/Math.max(1,vol30/rows.length);
+  signed+=Math.max(-15,Math.min(15,accel*40));
+
+  const first=rows[0],atr5=current5mAtr(bars5m||[],20)||1;
+  const startPrice=Number.isFinite(+first.c)?+first.c:null;
+  if(Number.isFinite(startPrice)&&Number.isFinite(+currentPrice)){
+    const move=(+currentPrice-startPrice)/atr5;
+    signed+=Math.max(-20,Math.min(20,move*20));
+  }
+
+  if(Number.isFinite(+rthVwap)&&Number.isFinite(+currentPrice)){
+    signed+=(+currentPrice>+rthVwap?10:+currentPrice<+rthVwap?-10:0);
+  }
+
+  const liq=(restingLiquidity?.levels||[]).slice(0,8);
+  const bidSize=liq.filter(x=>x.side==="BID").reduce((s,x)=>s+(+x.size||0),0);
+  const askSize=liq.filter(x=>x.side==="ASK").reduce((s,x)=>s+(+x.size||0),0);
+  if(bidSize+askSize>0) signed+=10*((bidSize-askSize)/(bidSize+askSize));
+
+  const ice=(icebergs||[]).slice(0,4);
+  const iceNet=ice.reduce((s,x)=>s+(x.side==="BUY"?1:x.side==="SELL"?-1:0)*Math.min(100,+x.score||0),0);
+  signed+=Math.max(-10,Math.min(10,iceNet/10));
+
+  signed=Math.max(-100,Math.min(100,signed));
+  const abs=Math.abs(signed),state=abs<25?"BALANCED":signed>0?"BUY":"SELL";
+  const score=+(abs/10).toFixed(1);
+
+  if(Math.abs(ratio)>=.03) reasons.push((ratio>0?"positive":"negative")+" 30m delta");
+  if(Math.abs(accel)>=.08) reasons.push((accel>0?"buy":"sell")+" pressure accelerating");
+  if(Number.isFinite(startPrice)&&Number.isFinite(+currentPrice)&&Math.abs((+currentPrice-startPrice)/atr5)>=.25) reasons.push((+currentPrice>startPrice?"price pushing higher":"price pushing lower"));
+  if(Number.isFinite(+rthVwap)&&Number.isFinite(+currentPrice)) reasons.push(+currentPrice>+rthVwap?"above NY VWAP":"below NY VWAP");
+  if(bidSize+askSize>0 && Math.abs(bidSize-askSize)/(bidSize+askSize)>.15) reasons.push(bidSize>askSize?"bid liquidity heavier":"ask liquidity heavier");
+  if(iceNet!==0) reasons.push(iceNet>0?"buy absorption present":"sell absorption present");
+
+  return {
+    active:true,label:"CLOSE PRESSURE",state,score,
+    startPacific:"12:30",endPacific:"13:00",
+    delta30:Math.round(delta30),deltaRatio:+ratio.toFixed(3),
+    reasons:reasons.slice(0,4),
+    note:"Collector-derived closing pressure proxy; not exchange MOC imbalance data."
+  };
+}
+
 function buildIndicatorPayload() {
   if(!latestSnapshot||!contract) return {};
   const a=latestSnapshot.analytics||{}, tick=+contract.tickSize||0.25;
@@ -1466,6 +1527,11 @@ function buildIndicatorPayload() {
   const marketStructure=calculateMarketStructure(
     bars5m,bars15m,relayFresh?relayState.currentGlobexCvd:(globexExact?.cvd??null)
   );
+  const closePressure=calculateClosePressure({
+    f1,bars5m,currentPrice,rthVwap,
+    restingLiquidity:relayFresh?(relayState.restingLiquidity||{}):{},
+    icebergs:relayFresh?(relayState.icebergs||[]):[]
+  });
   const orderBlocks=detectOrderBlocks(
     bars15m,levels,flow15m,currentPrice,rthVwap,globexVwap,15
   );
@@ -1495,7 +1561,7 @@ function buildIndicatorPayload() {
   maybeSendSignalAlert(signal,currentPrice);
 
   return {
-    schemaVersion:"1.5",
+    schemaVersion:"1.6",
     marketSymbol:MARKET_SYMBOL,
     cutoff0530Pacific:(morningCutoff?.cutoffPacificDate===nowPT().toISODate())?{
       cutoffPacificDate:morningCutoff.cutoffPacificDate,
@@ -1535,6 +1601,7 @@ function buildIndicatorPayload() {
     signal,
     analysis,
     marketStructure,
+    closePressure,
     volatility:{atr5m20:current5mAtr(liveBars5m,20),atr14Daily:latestSnapshot.analytics?.volatility?.ATR14Daily??null},
     diagnostics:{tradeEventsReceived,tradeEventsMatched,quoteEventsReceived,depthEventsReceived,lastRawTradeEvent,lastRawQuoteEvent,lastRawDepthEvent,reconnectCount,subscriptionResults,relayFresh:Boolean(relayFresh),relayReceivedAt:relayState?.receivedAt||null,lastTradeAt:relayState?.lastTradeAt||lastTradeAt||null,lastTradeReceivedAt:relayState?.lastTradeReceivedAt||null,lastQuoteReceivedAt:relayState?.lastQuoteReceivedAt||null,lastDepthReceivedAt:relayState?.lastDepthReceivedAt||null,alertScoreThreshold:ALERT_SCORE_THRESHOLD,smsConfigured:Boolean(ALERT_SMS_TO&&TWILIO_ACCOUNT_SID&&TWILIO_AUTH_TOKEN&&TWILIO_FROM_NUMBER)},
     profiles:{currentGlobex:globexExact,currentRTH:rthExact},
