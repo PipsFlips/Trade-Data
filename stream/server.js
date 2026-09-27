@@ -55,6 +55,8 @@ let reconnectCount = 0;
 let subscriptionResults = {quotes:null,trades:null,depth:null};
 let lastSignalAlert = {key:null,at:0};
 let relayState = null;
+let absorptionDepthHistory=[];
+let lastAbsorptionDepthSnapshotAt=0;
 let morningCutoff = null;
 let morningCutoffCaptureBusy = false;
 let signalStability = {setupKey:null,cvdAlignedSince:null,targetRoomAward:null};
@@ -1279,6 +1281,125 @@ function calculateMarketStructure(bars5m,bars15m,sessionCvd){
 }
 
 
+function recordAbsorptionDepthSnapshot(relay){
+  const now=Date.now();
+  if(now-lastAbsorptionDepthSnapshotAt<1500) return;
+  lastAbsorptionDepthSnapshotAt=now;
+  const levels=(relay?.restingLiquidity?.levels||[]).slice(0,8).map(x=>({
+    side:x.side,price:+x.price,size:+x.size||0,status:String(x.status||""),
+    refreshes:+x.refreshes||0
+  })).filter(x=>Number.isFinite(x.price));
+  const icebergs=(relay?.icebergs||[]).slice(0,4).map(x=>({
+    side:x.side,price:+x.price,score:+x.score||0,refreshes:+x.refreshes||0,
+    aggressorVolume:+x.aggressorVolume||0
+  })).filter(x=>Number.isFinite(x.price));
+  absorptionDepthHistory.push({at:now,price:+relay?.currentPrice,levels,icebergs});
+  const cut=now-5*60000;
+  absorptionDepthHistory=absorptionDepthHistory.filter(x=>x.at>=cut);
+}
+
+function calculateAbsorptionZones({f1,bars5m,currentPrice,levels}){
+  const now=Date.now(),cut=now-5*60000;
+  const rows=(f1||[]).filter(b=>{
+    const t=Date.parse(b.t);
+    return Number.isFinite(t)&&t>=cut;
+  }).sort((a,b)=>Date.parse(a.t)-Date.parse(b.t));
+  if(rows.length<2||!Number.isFinite(+currentPrice)) return [];
+
+  const sum=(xs,k1,k2)=>xs.reduce((s,x)=>s+(Number.isFinite(+x[k1])?+x[k1]:(k2&&Number.isFinite(+x[k2])?+x[k2]:0)),0);
+  const volume=Math.max(1,sum(rows,"volume","v"));
+  const delta=sum(rows,"delta");
+  const deltaRatio=Math.max(-1,Math.min(1,delta/volume));
+  if(Math.abs(deltaRatio)<.055) return [];
+
+  const highs=rows.map(x=>+x.h).filter(Number.isFinite),lows=rows.map(x=>+x.l).filter(Number.isFinite);
+  if(!highs.length||!lows.length) return [];
+  const high=Math.max(...highs),low=Math.min(...lows),range=Math.max(+contract?.tickSize||.25,high-low);
+  const firstOpen=Number.isFinite(+rows[0].o)?+rows[0].o:+rows[0].c;
+  const lastPrice=+currentPrice;
+  const atr5=current5mAtr(bars5m||[],20)||range;
+  const tick=+contract?.tickSize||.25;
+  const minZone=MARKET_SYMBOL==="MES"?.75:2.0;
+  const maxZone=MARKET_SYMBOL==="MES"?3.0:10.0;
+  const zoneWidth=Math.max(minZone,Math.min(maxZone,Math.max(tick*4,atr5*.16)));
+  const side=deltaRatio<0?"BUY":"SELL";
+  const zoneLow=side==="BUY"?low:Math.max(low,high-zoneWidth);
+  const zoneHigh=side==="BUY"?Math.min(high,low+zoneWidth):high;
+  const zoneMid=(zoneLow+zoneHigh)/2;
+
+  const pressureScore=Math.min(32,Math.abs(deltaRatio)*150);
+  const signedProgress=side==="BUY"?(firstOpen-lastPrice)/range:(lastPrice-firstOpen)/range;
+  const limitedProgress=Math.max(0,1-Math.max(0,Math.min(1,signedProgress)));
+  const stallScore=limitedProgress*18;
+  const closeLocation=(lastPrice-low)/range;
+  const rejection=side==="BUY"?Math.max(0,Math.min(1,closeLocation)):Math.max(0,Math.min(1,1-closeLocation));
+  const rejectionScore=rejection*10;
+
+  const prior=(f1||[]).filter(b=>{
+    const t=Date.parse(b.t);
+    return Number.isFinite(t)&&t<cut&&t>=cut-30*60000;
+  });
+  const priorVols=prior.map(x=>+(x.volume??x.v)||0).filter(x=>x>0).sort((a,b)=>a-b);
+  const med1=priorVols.length?priorVols[Math.floor(priorVols.length/2)]:0;
+  const avg1=volume/Math.max(1,rows.length);
+  const volumeMultiple=med1>0?avg1/med1:1;
+  const volumeScore=Math.max(0,Math.min(12,(volumeMultiple-.8)*10));
+
+  const hist=absorptionDepthHistory.filter(x=>x.at>=cut);
+  const wanted=side==="BUY"?"BID":"ASK";
+  let maxRefresh=0,replenishingSnapshots=0,maxDisplayedSize=0,matchingSnapshots=0;
+  const seenPrices=new Set();
+  for(const snap of hist){
+    for(const z of (snap.levels||[])){
+      if(z.side!==wanted||z.price<zoneLow-zoneWidth*.45||z.price>zoneHigh+zoneWidth*.45) continue;
+      matchingSnapshots++;
+      seenPrices.add(z.price.toFixed(2));
+      maxRefresh=Math.max(maxRefresh,+z.refreshes||0);
+      maxDisplayedSize=Math.max(maxDisplayedSize,+z.size||0);
+      if(z.status==="REPLENISHING"||z.status==="BEING HIT") replenishingSnapshots++;
+    }
+    for(const ice of (snap.icebergs||[])){
+      if(ice.side!==side||ice.price<zoneLow-zoneWidth*.45||ice.price>zoneHigh+zoneWidth*.45) continue;
+      maxRefresh=Math.max(maxRefresh,+ice.refreshes||0);
+      replenishingSnapshots+=2;
+    }
+  }
+  const depthScore=Math.min(22,maxRefresh*4+Math.min(10,replenishingSnapshots*.6)+Math.min(4,seenPrices.size));
+
+  const confluenceDistance=Math.max(MARKET_PARAMS.clusterMin,atr5*.12);
+  const nearby=(levels||[]).filter(l=>Number.isFinite(+l.price)&&Math.abs(+l.price-zoneMid)<=confluenceDistance)
+    .sort((a,b)=>(+b.priority||0)-(+a.priority||0));
+  const bestLevel=nearby[0]||null;
+  const confluenceScore=bestLevel?Math.min(10,4+(+bestLevel.priority||50)/20):0;
+
+  let score=Math.min(100,pressureScore+stallScore+rejectionScore+volumeScore+depthScore+confluenceScore);
+  const reasons=[];
+  reasons.push((deltaRatio<0?"negative":"positive")+" 5m delta "+Math.round(deltaRatio*100)+"%");
+  if(stallScore>=7) reasons.push(side==="BUY"?"selling not producing proportional downside":"buying not producing proportional upside");
+  if(rejectionScore>=4) reasons.push(side==="BUY"?"price rejecting/recovering from 5m low":"price rejecting/fading from 5m high");
+  if(maxRefresh>=1||replenishingSnapshots>=2) reasons.push((side==="BUY"?"bid":"ask")+" replenishment across zone");
+  if(seenPrices.size>=2) reasons.push("absorption spread across "+seenPrices.size+" nearby prices");
+  if(volumeMultiple>=1.2) reasons.push(volumeMultiple.toFixed(1)+"x recent 1m volume intensity");
+  if(bestLevel) reasons.push(bestLevel.label+" confluence");
+
+  // Strong aggressive pressure is required; without either stalled price or depth evidence,
+  // keep it below the display threshold to avoid labeling every directional impulse absorption.
+  if(depthScore<4&&stallScore<7&&rejectionScore<5) score=Math.min(score,49);
+  if(score<55) return [];
+
+  return [{
+    side,type:side==="BUY"?"buy-absorption":"sell-absorption",
+    low:+zoneLow.toFixed(2),high:+zoneHigh.toFixed(2),mid:+zoneMid.toFixed(2),
+    score:+(score/10).toFixed(1),delta5m:Math.round(delta),deltaRatio:+deltaRatio.toFixed(3),
+    volume:Math.round(volume),volumeMultiple:+volumeMultiple.toFixed(2),
+    refreshes:maxRefresh,replenishingSnapshots,priceLevelsHit:seenPrices.size,maxDisplayedSize,
+    confluence:bestLevel?{id:bestLevel.id,label:bestLevel.label,price:+bestLevel.price}:null,
+    startTime:rows[0].t,endTime:rows.at(-1).t,
+    reasons:reasons.slice(0,5),
+    note:"3-5 minute absorption candidate; not a standalone reversal signal."
+  }];
+}
+
 function calculateClosePressure({f1,bars5m,currentPrice,rthVwap,restingLiquidity,icebergs}){
   const pt=nowPT(),mins=pt.hour*60+pt.minute;
   const active=pt.weekday<=5 && mins>=750 && mins<780; // 12:30-13:00 PT only
@@ -1527,6 +1648,7 @@ function buildIndicatorPayload() {
   const marketStructure=calculateMarketStructure(
     bars5m,bars15m,relayFresh?relayState.currentGlobexCvd:(globexExact?.cvd??null)
   );
+  const absorptionZones=relayFresh?calculateAbsorptionZones({f1,bars5m,currentPrice,levels}):[];
   const closePressure=calculateClosePressure({
     f1,bars5m,currentPrice,rthVwap,
     restingLiquidity:relayFresh?(relayState.restingLiquidity||{}):{},
@@ -1561,7 +1683,7 @@ function buildIndicatorPayload() {
   maybeSendSignalAlert(signal,currentPrice);
 
   return {
-    schemaVersion:"1.6",
+    schemaVersion:"1.7",
     marketSymbol:MARKET_SYMBOL,
     cutoff0530Pacific:(morningCutoff?.cutoffPacificDate===nowPT().toISODate())?{
       cutoffPacificDate:morningCutoff.cutoffPacificDate,
@@ -1595,6 +1717,7 @@ function buildIndicatorPayload() {
     confirmedTraps:traps.slice(0,8),
     orderBlocks,
     icebergs:relayFresh?(relayState.icebergs||[]):[],
+    absorptionZones,
     restingLiquidity:relayFresh?(relayState.restingLiquidity||{levels:[],events:[],threshold:null}):{levels:[],events:[],threshold:null},
     gaps,
     orb,
@@ -1825,6 +1948,7 @@ app.post("/realtime-relay",(req,res)=>{
   const b=req.body||{};
   if(!b.receivedAt || !Array.isArray(b.oneMin) || !Array.isArray(b.fiveMin)) return res.status(400).json({ok:false,error:"invalid payload"});
   relayState=b;
+  recordAbsorptionDepthSnapshot(b);
   res.json({ok:true,receivedAt:b.receivedAt});
 });
 
