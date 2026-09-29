@@ -11,8 +11,8 @@
       "double": 15.6,
       "noBreak": 10.5,
       "continuation": {
-        "greenToGreen": 54.0,
-        "redToRed": 48.0,
+        "greenToGreen": 54,
+        "redToRed": 48,
         "greenSample": 166,
         "redSample": 92,
         "sample": 258
@@ -35,10 +35,10 @@
           "breakdownSample": 89,
           "breakoutHalf": 29.75,
           "breakoutOne": 1.65,
-          "breakoutOneHalf": 0.0,
+          "breakoutOneHalf": 0,
           "breakdownHalf": 34.83,
           "breakdownOne": 1.12,
-          "breakdownOneHalf": 0.0
+          "breakdownOneHalf": 0
         },
         "formationFollowThrough": {
           "highFirstToHighBreak": 30.47,
@@ -82,11 +82,11 @@
           "breakoutSample": 90,
           "breakdownSample": 74,
           "breakoutHalf": 37.78,
-          "breakoutOne": 10.0,
+          "breakoutOne": 10,
           "breakoutOneHalf": 1.11,
           "breakdownHalf": 41.89,
           "breakdownOne": 4.05,
-          "breakdownOneHalf": 0.0
+          "breakdownOneHalf": 0
         }
       }
     },
@@ -127,15 +127,146 @@
           "breakdownSample": 88,
           "breakoutHalf": 23.66,
           "breakoutOne": 5.38,
-          "breakoutOneHalf": 0.0,
+          "breakoutOneHalf": 0,
           "breakdownHalf": 19.32,
           "breakdownOne": 2.27,
-          "breakdownOneHalf": 0.0
+          "breakdownOneHalf": 0
         }
       }
     },
     "londonNy": {
       "note": "near 50/50; excluded from scoring"
+    },
+    "gapFillBySize": {
+      "asOf": "2026-09-28",
+      "measurement": "percent",
+      "fullFillThreshold": 100,
+      "buckets": {
+        "0-0.19": {
+          "up": {
+            "fill": 91,
+            "sample": 32
+          },
+          "down": {
+            "fill": 84,
+            "sample": 31
+          }
+        },
+        "0.2-0.39": {
+          "up": {
+            "fill": 76,
+            "sample": 29
+          },
+          "down": {
+            "fill": 81,
+            "sample": 21
+          }
+        },
+        "0.4-0.69": {
+          "up": {
+            "fill": 42,
+            "sample": 24
+          },
+          "down": {
+            "fill": 42,
+            "sample": 26
+          }
+        },
+        "0.7-0.99": {
+          "up": {
+            "fill": 26,
+            "sample": 23
+          },
+          "down": {
+            "fill": 56,
+            "sample": 16
+          }
+        },
+        "1.0-1.49": {
+          "up": {
+            "fill": 20,
+            "sample": 20
+          },
+          "down": {
+            "fill": 13,
+            "sample": 15
+          }
+        },
+        ">=1.5": {
+          "up": {
+            "fill": 23,
+            "sample": 13
+          },
+          "down": {
+            "fill": 25,
+            "sample": 8
+          }
+        }
+      }
+    },
+    "insideDayBreakout": {
+      "asOf": "2026-09-28",
+      "buckets": {
+        "0-0.99": {
+          "breakout": 89,
+          "sample": 44
+        },
+        "1-1.99": {
+          "breakout": 86,
+          "sample": 72
+        }
+      }
+    },
+    "ib60BySize": {
+      "asOf": "2026-09-28",
+      "breakoutCriteria": "5m close",
+      "buckets": {
+        "0.6-0.89": {
+          "singleBreak": 89,
+          "doubleBreak": 4,
+          "noBreak": 7,
+          "sample": 100
+        }
+      }
+    },
+    "prevDayColor": {
+      "asOf": "2026-09-28",
+      "green": {
+        "highBreak": {
+          "rate": 69,
+          "sample": 132
+        },
+        "highFollowGreen": {
+          "rate": 79,
+          "sample": 91
+        },
+        "lowBreak": {
+          "rate": 31,
+          "sample": 132
+        },
+        "lowFollowRed": {
+          "rate": 83,
+          "sample": 41
+        }
+      },
+      "red": {
+        "highBreak": {
+          "rate": 44,
+          "sample": 129
+        },
+        "highFollowGreen": {
+          "rate": 82,
+          "sample": 57
+        },
+        "lowBreak": {
+          "rate": 56,
+          "sample": 129
+        },
+        "lowFollowRed": {
+          "rate": 78,
+          "sample": 72
+        }
+      }
     }
   },
   "ES": {
@@ -147,8 +278,8 @@
       "double": 19.1,
       "noBreak": 7,
       "continuation": {
-        "greenToGreen": 56.0,
-        "redToRed": 51.0,
+        "greenToGreen": 56,
+        "redToRed": 51,
         "greenSample": 156,
         "redSample": 102,
         "sample": 258
@@ -171,7 +302,7 @@
           "breakdownSample": 94,
           "breakoutHalf": 26.13,
           "breakoutOne": 1.8,
-          "breakoutOneHalf": 0.0,
+          "breakoutOneHalf": 0,
           "breakdownHalf": 41.49,
           "breakdownOne": 2.13,
           "breakdownOneHalf": 1.06
@@ -219,7 +350,7 @@
           "breakdownSample": 70,
           "breakoutHalf": 41.46,
           "breakoutOne": 12.2,
-          "breakoutOneHalf": 0.0,
+          "breakoutOneHalf": 0,
           "breakdownHalf": 38.57,
           "breakdownOne": 5.71,
           "breakdownOneHalf": 2.86
@@ -263,15 +394,147 @@
           "breakdownSample": 88,
           "breakoutHalf": 21.25,
           "breakoutOne": 1.25,
-          "breakoutOneHalf": 0.0,
+          "breakoutOneHalf": 0,
           "breakdownHalf": 18.18,
           "breakdownOne": 1.14,
-          "breakdownOneHalf": 0.0
+          "breakdownOneHalf": 0
         }
       }
     },
     "londonNy": {
       "note": "near 50/50; excluded from scoring"
+    },
+    "gapFillBySize": {
+      "asOf": "2026-09-28",
+      "measurement": "percent",
+      "fullFillThreshold": 100,
+      "buckets": {
+        "0-0.19": {
+          "up": {
+            "fill": 91,
+            "sample": 57
+          },
+          "down": {
+            "fill": 74,
+            "sample": 39
+          }
+        },
+        "0.2-0.39": {
+          "up": {
+            "fill": 50,
+            "sample": 36
+          },
+          "down": {
+            "fill": 72,
+            "sample": 25
+          }
+        },
+        "0.4-0.69": {
+          "up": {
+            "fill": 38,
+            "sample": 29
+          },
+          "down": {
+            "fill": 27,
+            "sample": 26
+          }
+        },
+        "0.7-0.99": {
+          "up": {
+            "fill": 33,
+            "sample": 15
+          },
+          "down": {
+            "fill": 38,
+            "sample": 8
+          }
+        },
+        "1.0-1.49": {
+          "up": {
+            "fill": 22,
+            "sample": 9
+          },
+          "down": {
+            "fill": 33,
+            "sample": 9
+          }
+        },
+        ">=1.5": {
+          "up": {
+            "fill": 50,
+            "sample": 2
+          },
+          "down": {
+            "fill": 0,
+            "sample": 1
+          }
+        }
+      }
+    },
+    "insideDayBreakout": {
+      "asOf": "2026-09-28",
+      "buckets": {
+        "0-0.99": {
+          "breakout": 87,
+          "sample": 95
+        },
+        "1-1.99": {
+          "breakout": 83,
+          "sample": 52
+        }
+      }
+    },
+    "ib60BySize": {
+      "asOf": "2026-09-28",
+      "breakoutCriteria": "5m close",
+      "buckets": {
+        "0.6-0.89": {
+          "singleBreak": 81,
+          "doubleBreak": 10,
+          "noBreak": 8,
+          "sample": 59
+        }
+      }
+    },
+    "prevDayColor": {
+      "asOf": "2026-09-28",
+      "green": {
+        "highBreak": {
+          "rate": 68,
+          "sample": 134
+        },
+        "highFollowGreen": {
+          "rate": 75,
+          "sample": 91
+        },
+        "lowBreak": {
+          "rate": 32,
+          "sample": 134
+        },
+        "lowFollowRed": {
+          "rate": 86,
+          "sample": 43
+        }
+      },
+      "red": {
+        "highBreak": {
+          "rate": 42,
+          "sample": 129
+        },
+        "highFollowGreen": {
+          "rate": 83,
+          "sample": 54
+        },
+        "lowBreak": {
+          "rate": 58,
+          "sample": 129
+        },
+        "lowFollowRed": {
+          "rate": 77,
+          "sample": 75
+        }
+      }
     }
-  }
+  },
+  "candidateStatsAsOf": "2026-09-28"
 }
