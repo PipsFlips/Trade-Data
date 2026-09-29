@@ -766,10 +766,11 @@ function buildEdgefulChartContext(bars5m){
     const filled=up?r.low<=prior.close:r.high>=prior.close;
     const gapPct=prior.close?100*Math.abs(+first.o-prior.close)/Math.abs(prior.close):null;
     const gapKey=edgeGapBucketKey(gapPct),gapSide=up?"up":"down",gapBucket=gapKey?e.gapFillBySize?.buckets?.[gapKey]?.[gapSide]:null;
-    const gapRate=Number.isFinite(+gapBucket?.fill)?+gapBucket.fill:(up?e.gapFill.up:e.gapFill.down);
-    const gapN=Number.isFinite(+gapBucket?.sample)?gapBucket.sample:null;
+    const useGapBucket=gapBucket&&Number.isFinite(+gapBucket.fill)&&Number.isFinite(+gapBucket.sample)&&+gapBucket.sample>=15;
+    const gapRate=useGapBucket?+gapBucket.fill:(up?e.gapFill.up:e.gapFill.down);
+    const gapN=useGapBucket?gapBucket.sample:null;
     add("gap","RTH gap",equal?"No opening gap":filled?"Filled during RTH":up?"Gap up · unfilled":"Gap down · unfilled",
-      equal?"No gap condition":"Full-fill frequency "+pct(gapRate)+(gapKey?" · "+gapKey+"% bucket":"")+(gapN?" · n="+gapN:""),
+      equal?"No gap condition":"Full-fill frequency "+pct(gapRate)+(useGapBucket?" · "+gapKey+"% bucket":" · all-size baseline")+(gapN?" · n="+gapN:""),
       equal?null:{high:Math.max(+first.o,prior.close),low:Math.min(+first.o,prior.close),highTime:open.toISO(),lowTime:open.toISO(),start:open.toISO(),end:close.toISO(),monitorEnd:close.toISO()},filled?15:50,
       {detail:"Today's RTH gap only. Prior close "+prior.close.toFixed(2)+(Number.isFinite(+gapPct)?"; gap "+gapPct.toFixed(2)+"%":"")+". Size-conditioned fill rates may support or conflict with a gap-fill setup."});
   }else{
