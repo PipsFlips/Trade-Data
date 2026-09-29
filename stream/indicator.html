@@ -167,7 +167,7 @@ canvas{display:block;width:100%;height:410px;border-radius:8px;background:#0d131
       <button class="layerbtn active" data-layer="pivots">1H pivots</button>
       <button class="layerbtn active" data-layer="ob">15m OB</button>
       <button class="layerbtn active" data-layer="orb">ORB</button>
-      <button class="layerbtn active" data-midday-visibility data-layer="middayOrb">11-12 ORB</button>
+      <button class="layerbtn active" data-layer="middayOrb">11-12 ORB</button>
       <button class="layerbtn active" data-layer="vwap">VWAP</button>
       <button class="layerbtn active" data-layer="traps">Traps</button>
       <button class="layerbtn active" data-layer="absorption">Absorption</button>
@@ -183,7 +183,7 @@ canvas{display:block;width:100%;height:410px;border-radius:8px;background:#0d131
       <span><i style="display:inline-block;width:12px;height:7px;background:rgba(240,101,101,.12);border:1px solid rgba(240,101,101,.5);vertical-align:middle;margin-right:4px"></i>15m Bear OB</span>
       <span><i style="display:inline-block;width:14px;border-top:2px dashed #31c48d;vertical-align:middle;margin-right:4px"></i>ORB H</span>
       <span><i style="display:inline-block;width:14px;border-top:2px dashed #f06565;vertical-align:middle;margin-right:4px"></i>ORB L</span>
-      <span data-midday-visibility><i style="display:inline-block;width:14px;border-top:2px dashed #b084ff;vertical-align:middle;margin-right:4px"></i>11-12 ORB</span>
+      <span><i style="display:inline-block;width:14px;border-top:2px dashed #b084ff;vertical-align:middle;margin-right:4px"></i>11-12 ORB</span>
     </div>
     <section id="edgeChart" class="edgeChart" aria-label="Edgeful chart context"></section>
     <canvas id="chart"></canvas>
@@ -531,11 +531,18 @@ function resizeCanvas(c){
   return {w:rect.width,h:rect.height,ctx};
 }
 
-function middayVisible(ts=Date.now()){
+function pacificMinutes(ts=Date.now()){
   const parts=new Intl.DateTimeFormat("en-US",{timeZone:"America/Los_Angeles",hour:"2-digit",minute:"2-digit",hourCycle:"h23"}).formatToParts(new Date(ts));
   const o={};for(const p of parts)o[p.type]=p.value;
-  const minutes=(+o.hour)*60+(+o.minute);
+  return (+o.hour)*60+(+o.minute);
+}
+function middayVisible(ts=Date.now()){
+  const minutes=pacificMinutes(ts);
   return minutes>=660&&minutes<780;
+}
+function orbVisible(ts=Date.now()){
+  const minutes=pacificMinutes(ts);
+  return minutes>=390&&minutes<780;
 }
 let edgeSelection=null,edgeSession=null,edgeMarkupKey=null;
 function renderEdgefulChart(data){
@@ -545,9 +552,9 @@ function renderEdgefulChart(data){
   if(!e){host.textContent="Edgeful chart context unavailable.";edgeMarkupKey=null;return null;}
   const session=(data.marketSymbol||"")+e.sessionDate;
   if(edgeSession!==session){edgeSelection=null;edgeSession=session;}
-  const items=(e.items||[]).filter(i=>i.key!=="midday"||middayVisible()).map(i=>i.key==="midday"?{...i,label:"11-12 ORB"}:i);
+  const items=(e.items||[]).map(i=>i.key==="midday"?{...i,label:"11-12 ORB"}:i);
   const selected=items.find(i=>i.key===edgeSelection)||[...items].sort((a,b)=>b.priority-a.priority)[0];
-  const signature=JSON.stringify([e,selected?.key,chartMode,middayVisible()]);
+  const signature=JSON.stringify([e,selected?.key,chartMode,middayVisible(),orbVisible()]);
   if(signature!==edgeMarkupKey){
     edgeMarkupKey=signature;
     host.innerHTML='<div class="edgeHeading"><strong>EDGEFUL · HISTORICAL CONTEXT</strong><span id="edgePhase"></span></div><div class="edgeTabs" role="group" aria-label="Historical conditions"></div><div class="edgeState"></div><div class="edgeStat"></div><div class="edgeCaution">Historical frequencies · not trade win rates</div><details class="edgeNotes"><summary class="edgeSummary"></summary><div class="edgeDetail"></div><div class="edgeMeta"></div></details>';
@@ -567,6 +574,8 @@ function renderEdgefulChart(data){
   return selected;
 }
 function drawEdgefulOverlay(ctx,item,bars,x,y,left,top,cw,ch,min,max){
+  if(item?.key==="midday"&&!middayVisible())return;
+  if(item?.key==="orb15"&&!orbVisible())return;
   const g=item?.geometry;if(!g||!bars.length)return;
   const first=Date.parse(bars[0].t),last=Date.parse(bars.at(-1).t)+300000;
   if(Date.parse(g.start)>=last||Date.parse(g.monitorEnd)<=first)return;
@@ -592,7 +601,6 @@ function drawEdgefulOverlay(ctx,item,bars,x,y,left,top,cw,ch,min,max){
 }
 function drawChart(data){
   lastData=data;
-  document.querySelectorAll("[data-midday-visibility]").forEach(el=>{el.hidden=!middayVisible();});
   const edgeItem=renderEdgefulChart(data);
   const c=document.getElementById("chart");
   const {w,h,ctx}=resizeCanvas(c);
@@ -661,7 +669,7 @@ function drawChart(data){
     .slice(0,10);
 
   // Opening Range (06:30-06:45 PT): longer dashed high/low lines.
-  if(chartLayers.orb!==false && data.orb?.formed){
+  if(orbVisible() && barKind==="5m" && chartLayers.orb!==false && data.orb?.formed){
     const orbLines=[
       {p:+data.orb.high,label:"ORB H",col:"#31c48d"},
       {p:+data.orb.low,label:"ORB L",col:"#f06565"}
@@ -1078,7 +1086,7 @@ function renderMarketStructure(data){
 function renderEdgefulContext(data){
   const e=data.edgefulContext||{},el=document.getElementById("edgefulContext");
   if(!el) return;
-  const items=(e.items||[]).filter(x=>x.applicable&&(x.key!=="midday"||middayVisible())).map(x=>x.key==="midday"?{...x,label:"11-12 ORB"}:x);
+  const items=(e.items||[]).filter(x=>x.applicable).map(x=>x.key==="midday"?{...x,label:"11-12 ORB"}:x);
   el.innerHTML=items.map(x=>
     '<div class="row"><span>'+x.label+'</span><b style="text-align:right;font-size:10px">'+x.text+'</b></div>'
   ).join("")||'<div class="reason">No Edgeful context applicable yet.</div>';
