@@ -91,8 +91,8 @@ canvas{display:block;width:100%;height:410px;border-radius:8px;background:#0d131
 /* Historical context belongs to the chart, with one inspectable overlay at a time. */
 .edgeChart{border:1px solid #514978;border-radius:10px;background:linear-gradient(120deg,#17172b,#111923);padding:10px;margin:8px 0}
 .edgeHeading{display:flex;justify-content:space-between;gap:8px;font-size:10px;color:#c5b5ff;letter-spacing:.05em}
-.edgeTabs{display:flex;gap:5px;overflow-x:auto;padding:9px 0;scrollbar-width:thin}
-.edgeTab{flex:0 0 auto;border:1px solid #39364d;border-radius:6px;background:#151b26;color:#a9b4c4;font-size:11px;padding:7px 9px;cursor:pointer}
+.edgeTabs{display:flex;flex-wrap:wrap;gap:4px;width:100%;padding:7px 0}
+.edgeTab{appearance:none;flex:0 1 auto;max-width:100%;border:1px solid #39364d;border-radius:8px;background:#151b26;color:#a9b4c4;font-size:9px;font-weight:800;letter-spacing:.02em;padding:4px 8px;cursor:pointer}
 .edgeTab[aria-pressed="true"]{background:#322b4c;border-color:#b7a1f7;color:#fff}
 .edgeState{font-size:12px;color:#eef3f8;font-weight:700;margin-bottom:4px}
 .edgeStat{font-size:12px;line-height:1.55;color:#cfbfff;font-variant-numeric:tabular-nums}
