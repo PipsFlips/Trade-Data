@@ -52,3 +52,13 @@ test('live analysis exposes Edgeful checks and applies them to a directional set
   assert.match(setup.context,/Edgeful qualifier supports BUY/);
   assert.match(analysis.note,/low-weight qualifiers/);
 });
+
+
+test('candidate Edgeful baselines include the four integrated qualifiers',()=>{
+  assert.equal(baseline.NQ.gapFillBySize.buckets['0-0.19'].up.fill,91);
+  assert.equal(baseline.ES.gapFillBySize.buckets['0-0.19'].down.sample,39);
+  assert.equal(baseline.NQ.insideDayBreakout.buckets['0-0.99'].breakout,89);
+  assert.equal(baseline.NQ.ib60BySize.buckets['0.6-0.89'].singleBreak,89);
+  assert.equal(baseline.NQ.prevDayColor.green.lowFollowRed.rate,83);
+  assert.equal(baseline.ES.prevDayColor.red.highFollowGreen.rate,83);
+});
