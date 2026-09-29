@@ -156,6 +156,7 @@ canvas{display:block;width:100%;height:410px;border-radius:8px;background:#0d131
       <button class="layerbtn active" data-layer="pivots">1H pivots</button>
       <button class="layerbtn active" data-layer="ob">15m OB</button>
       <button class="layerbtn active" data-layer="orb">ORB</button>
+      <button class="layerbtn active" data-layer="middayOrb">11-12 ORB</button>
       <button class="layerbtn active" data-layer="vwap">VWAP</button>
       <button class="layerbtn active" data-layer="traps">Traps</button>
       <button class="layerbtn active" data-layer="absorption">Absorption</button>
@@ -170,6 +171,7 @@ canvas{display:block;width:100%;height:410px;border-radius:8px;background:#0d131
       <span><i style="display:inline-block;width:12px;height:7px;background:rgba(240,101,101,.12);border:1px solid rgba(240,101,101,.5);vertical-align:middle;margin-right:4px"></i>15m Bear OB</span>
       <span><i style="display:inline-block;width:14px;border-top:2px dashed #31c48d;vertical-align:middle;margin-right:4px"></i>ORB H</span>
       <span><i style="display:inline-block;width:14px;border-top:2px dashed #f06565;vertical-align:middle;margin-right:4px"></i>ORB L</span>
+      <span><i style="display:inline-block;width:14px;border-top:2px dashed #b084ff;vertical-align:middle;margin-right:4px"></i>11-12 ORB</span>
     </div>
     <canvas id="chart"></canvas>
   </div>
@@ -278,6 +280,12 @@ canvas{display:block;width:100%;height:410px;border-radius:8px;background:#0d131
         <summary>Market Structure — Trend / Range / Transition</summary>
         <div class="legendBody">
           Market Structure uses completed 5-minute price action with 15-minute confirmation. The trend score weights directional efficiency, normalized slope, HH/HL or LH/LL structure, rolling VWAP alignment, and 15-minute agreement. The range score weights low directional efficiency, candle overlap, VWAP crossings, compressed range width relative to ATR, and neutral swing structure. <b>RANGE</b> is drawn as a horizontal shaded box. <b>TREND UP/DOWN</b> is drawn as an adaptive regression channel: the centerline is the recent 5-minute regression fit, while the parallel upper/lower bands use 1.75× residual standard deviation with an ATR-based minimum width. <b>TRANSITION</b> means neither side has enough aligned evidence yet.
+        </div>
+      </details>
+      <details>
+        <summary>11:00–12:00 PT Midday ORB</summary>
+        <div class="legendBody">
+          The system builds a separate range from <b>11:00–12:00 PT</b>, freezes its high/low at noon, and watches the final hour into the 13:00 PT close. Edgeful's trailing 12-month sample through 2026-09-25 showed that after this range formed, <b>NQ</b> produced a wick-based one-side break on 76.6% of sessions and a double break on 12.9%; using a 5-minute close beyond the range, one-side breaks were 73.0% and double breaks 4.0% (n=248). <b>ES</b> was 73.8% one-side / 14.1% double by wick and 67.7% one-side / 6.5% double by 5-minute close (n=248). These are historical frequencies, not trade probabilities. The live engine only promotes a setup after a 5-minute close outside the range and still requires current delta/VWAP/bias confirmation.
         </div>
       </details>
       <details>
@@ -435,7 +443,7 @@ const levelColor=l=>{
 let chartBarCount=48;
 let chartMode="intraday";
 let lastData=null;
-const defaultChartLayers={sessions:true,prior:true,profiles:true,pivots:true,ob:true,orb:true,vwap:true,traps:true,absorption:true,liquidity:true,structure:true};
+const defaultChartLayers={sessions:true,prior:true,profiles:true,pivots:true,ob:true,orb:true,middayOrb:true,vwap:true,traps:true,absorption:true,liquidity:true,structure:true};
 let chartLayers={...defaultChartLayers};
 try{
   const saved=JSON.parse(localStorage.getItem("mnqChartLayers")||"null");
@@ -573,6 +581,27 @@ function drawChart(data){
       ctx.fillStyle="rgba(13,19,26,.86)";ctx.fillRect(w-right-58,py-13,54,11);
       ctx.fillStyle=o.col;ctx.textAlign="right";ctx.fillText(o.label+" "+fmt(o.p),w-right-5,py-7);
     }
+  }
+
+  // Midday ORB: 11:00-12:00 PT range, monitored into the 13:00 PT close.
+  if(barKind==="5m" && chartLayers.middayOrb!==false && data.middayOrb?.formed){
+    const mo=data.middayOrb;
+    const lines=[
+      {p:+mo.high,label:"11-12 H",col:"#b084ff"},
+      {p:+mo.low,label:"11-12 L",col:"#ff9b73"}
+    ];
+    ctx.font="bold 9px -apple-system,BlinkMacSystemFont,Segoe UI,Arial";
+    for(const o of lines){
+      if(!Number.isFinite(o.p)||o.p<min||o.p>max) continue;
+      const py=y(o.p);
+      ctx.save();ctx.strokeStyle=o.col;ctx.globalAlpha=.82;ctx.lineWidth=1.4;ctx.setLineDash([7,5]);
+      ctx.beginPath();ctx.moveTo(left,py);ctx.lineTo(w-right,py);ctx.stroke();ctx.restore();
+      ctx.fillStyle="rgba(13,19,26,.86)";ctx.fillRect(w-right-68,py-13,64,11);
+      ctx.fillStyle=o.col;ctx.textAlign="right";ctx.fillText(o.label+" "+fmt(o.p),w-right-5,py-7);
+    }
+    const st=mo.closeState||mo.wickState||"NO BREAK";
+    ctx.textAlign="left";ctx.fillStyle="#b9a7ff";
+    ctx.fillText("11-12 ORB: "+st,left+4,top+24);
   }
 
   // Session-start markers: low-opacity dotted vertical lines.
