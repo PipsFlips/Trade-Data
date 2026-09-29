@@ -127,15 +127,6 @@ canvas{display:block;width:100%;height:410px;border-radius:8px;background:#0d131
     <div class="card"><div class="k">Raw NY CVD</div><div class="v" id="cvd">—</div></div>
   </div>
 
-  <div class="structureBox" id="marketStructureBox">
-    <div class="structureHead">
-      <div class="structureTitle">Market Structure</div>
-      <div class="structureState transition" id="structureState">TRANSITION · 0.0/10</div>
-    </div>
-    <div class="structureMeta" id="structureMeta">Waiting for enough completed 5-minute structure.</div>
-    <div class="structureSub" id="structureSub">Score = weighted evidence alignment, not a probability.</div>
-  </div>
-
   <div class="closePressureBox" id="closePressureBox">
     <div class="closePressureHead">
       <div class="closePressureTitle">Close Pressure</div>
@@ -175,18 +166,17 @@ canvas{display:block;width:100%;height:410px;border-radius:8px;background:#0d131
       <button class="layerbtn active" data-layer="structure">Structure</button>
       <button class="layerbtn active" data-layer="edgeful">Edgeful</button>
     </div>
-    <div style="display:flex;gap:12px;align-items:center;margin:0 0 5px 2px;font-size:9px;color:var(--muted)">
-      <span><i style="display:inline-block;width:12px;border-top:1px dotted #f2c94c;vertical-align:middle;margin-right:4px"></i>Asia 20:00 ET</span>
-      <span><i style="display:inline-block;width:12px;border-top:1px dotted #57a4ff;vertical-align:middle;margin-right:4px"></i>London 03:00 ET</span>
-      <span><i style="display:inline-block;width:12px;border-top:1px dotted #ffffff;vertical-align:middle;margin-right:4px"></i>NY 09:30 ET</span>
-      <span><i style="display:inline-block;width:12px;height:7px;background:rgba(49,196,141,.12);border:1px solid rgba(49,196,141,.5);vertical-align:middle;margin-right:4px"></i>15m Bull OB</span>
-      <span><i style="display:inline-block;width:12px;height:7px;background:rgba(240,101,101,.12);border:1px solid rgba(240,101,101,.5);vertical-align:middle;margin-right:4px"></i>15m Bear OB</span>
-      <span><i style="display:inline-block;width:14px;border-top:2px dashed #31c48d;vertical-align:middle;margin-right:4px"></i>ORB H</span>
-      <span><i style="display:inline-block;width:14px;border-top:2px dashed #f06565;vertical-align:middle;margin-right:4px"></i>ORB L</span>
-      <span><i style="display:inline-block;width:14px;border-top:2px dashed #b084ff;vertical-align:middle;margin-right:4px"></i>11-12 ORB</span>
-    </div>
     <section id="edgeChart" class="edgeChart" aria-label="Edgeful chart context"></section>
     <canvas id="chart"></canvas>
+  </div>
+
+  <div class="structureBox" id="marketStructureBox">
+    <div class="structureHead">
+      <div class="structureTitle">Market Structure</div>
+      <div class="structureState transition" id="structureState">TRANSITION · 0.0/10</div>
+    </div>
+    <div class="structureMeta" id="structureMeta">Waiting for enough completed 5-minute structure.</div>
+    <div class="structureSub" id="structureSub">Score = weighted evidence alignment, not a probability.</div>
   </div>
 
   <div class="section" id="analysisBox">
@@ -256,9 +246,9 @@ canvas{display:block;width:100%;height:410px;border-radius:8px;background:#0d131
         </div>
       </details>
       <details>
-        <summary>ON High / Low / VAH / POC / VAL</summary>
+        <summary>ON High / Low</summary>
         <div class="legendBody">
-          <b>ON</b> means the overnight window from 15:00 PT to 06:30 PT. ON High/Low are the highest and lowest traded prices in that window and freeze at the RTH open. <b>VAH/VAL</b> bound the 70% value area of the overnight volume profile. <b>POC</b> is the price with the most volume. The profile is estimated from historical bars unless exact local trade-at-price data is available for that session.
+          <b>ON</b> means the overnight window from 15:00 PT to 06:30 PT. ON High/Low are the highest and lowest traded prices in that window and freeze at the RTH open. Overnight VAH/VAL/POC are kept out of the visible Profiles layer; use the Sessions layer for the overnight extremes.
         </div>
       </details>
       <details>
@@ -484,7 +474,11 @@ const layerForLevel=l=>{
   if(id.startsWith("pivot")) return "pivots";
   return "prior";
 };
-const levelEnabled=l=>chartLayers[layerForLevel(l)]!==false;
+const levelEnabled=l=>{
+  const id=String(l?.id||"");
+  if(["onVah","onPoc","onVal"].includes(id)) return false;
+  return chartLayers[layerForLevel(l)]!==false;
+};
 
 function etSessionMinutes(ts){
   const parts=new Intl.DateTimeFormat("en-US",{timeZone:"America/New_York",hour:"2-digit",minute:"2-digit",hourCycle:"h23"}).formatToParts(new Date(ts));
