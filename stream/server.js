@@ -974,8 +974,11 @@ function buildMarketAnalysis({currentPrice,levels,f1,f5,signal,traps,orderBlocks
   for(let n=1;n<=7&&!priorRth;n++){
     const d=rthDay.minus({days:n}),s=d.set({hour:6,minute:30,second:0,millisecond:0}),t=d.set({hour:13,minute:0,second:0,millisecond:0});
     const xs=between(closedBars,s,t);
-    // Require near-complete RTH coverage before applying prior-day bucket qualifiers.
-    if(xs.length>=70){priorRth=summary(xs);priorRthDate=d.toISODate();}
+    if(xs.length){
+      // Do not skip a partial/early-close prior session and accidentally substitute an older day.
+      if(xs.length>=70){priorRth=summary(xs);priorRthDate=d.toISODate();}
+      break;
+    }
   }
   const pdh=(levels||[]).find(x=>x.id==="pdh"),pdl=(levels||[]).find(x=>x.id==="pdl");
   const rangeBreak=(end,high,low,stop=rthEnd)=>{
