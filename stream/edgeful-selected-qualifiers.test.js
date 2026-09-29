@@ -66,7 +66,7 @@ test('ES prior red day plus confirmed PDH break uses the color-conditioned conti
   assert.ok(!a.edgeful.checks.some(x=>x.label==='prior-high follow-through'));
 });
 test('small RTH gaps use the size-conditioned fill rate rather than the generic gap rate',()=>{
-  const gaps=[{kind:'RTH',near:true,filled:false,fillDirection:'SELL',direction:'UP',size:.15,priorClose:100,open:100.15}];
+  const gaps=[{kind:'RTH',label:'RTH',near:true,filled:false,fillDirection:'SELL',direction:'UP',size:.15,priorClose:100,open:100.15,distance:.1,fillTarget:100}];
   const a=run('MNQ',makeBars(),gaps);
   assert.ok(a.edgeful.checks.some(x=>x.label==='size-conditioned gap fill'&&x.side==='SELL'&&/90.3%/.test(x.text)&&/n=31/.test(x.text)));
   assert.ok(!a.edgeful.checks.some(x=>x.label==='gap-fill tendency'));
