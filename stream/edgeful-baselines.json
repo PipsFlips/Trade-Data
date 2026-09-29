@@ -11,8 +11,8 @@
       "double": 15.6,
       "noBreak": 10.5,
       "continuation": {
-        "greenToGreen": 54.0,
-        "redToRed": 48.0,
+        "greenToGreen": 54,
+        "redToRed": 48,
         "greenSample": 166,
         "redSample": 92,
         "sample": 258
@@ -35,10 +35,10 @@
           "breakdownSample": 89,
           "breakoutHalf": 29.75,
           "breakoutOne": 1.65,
-          "breakoutOneHalf": 0.0,
+          "breakoutOneHalf": 0,
           "breakdownHalf": 34.83,
           "breakdownOne": 1.12,
-          "breakdownOneHalf": 0.0
+          "breakdownOneHalf": 0
         },
         "formationFollowThrough": {
           "highFirstToHighBreak": 30.47,
@@ -82,11 +82,11 @@
           "breakoutSample": 90,
           "breakdownSample": 74,
           "breakoutHalf": 37.78,
-          "breakoutOne": 10.0,
+          "breakoutOne": 10,
           "breakoutOneHalf": 1.11,
           "breakdownHalf": 41.89,
           "breakdownOne": 4.05,
-          "breakdownOneHalf": 0.0
+          "breakdownOneHalf": 0
         }
       }
     },
@@ -127,15 +127,42 @@
           "breakdownSample": 88,
           "breakoutHalf": 23.66,
           "breakoutOne": 5.38,
-          "breakoutOneHalf": 0.0,
+          "breakoutOneHalf": 0,
           "breakdownHalf": 19.32,
           "breakdownOne": 2.27,
-          "breakdownOneHalf": 0.0
+          "breakdownOneHalf": 0
         }
       }
     },
     "londonNy": {
       "note": "near 50/50; excluded from scoring"
+    },
+    "selectedQualifiers": {
+      "dataThrough": "2026-09-28",
+      "smallGapFill": {
+        "bucketMinPct": 0,
+        "bucketMaxPct": 0.19,
+        "up": {
+          "rate": 90.3,
+          "sample": 31
+        },
+        "down": {
+          "rate": 83.3,
+          "sample": 30
+        }
+      },
+      "insideDayBreakout": {
+        "bucketMinPct": 1,
+        "bucketMaxPct": 1.99,
+        "rate": 86.1,
+        "sample": 72
+      },
+      "ib60Size": {
+        "bucketMinPct": 0.6,
+        "bucketMaxPct": 0.89,
+        "singleBreak": 85.7,
+        "sample": 98
+      }
     }
   },
   "ES": {
@@ -147,8 +174,8 @@
       "double": 19.1,
       "noBreak": 7,
       "continuation": {
-        "greenToGreen": 56.0,
-        "redToRed": 51.0,
+        "greenToGreen": 56,
+        "redToRed": 51,
         "greenSample": 156,
         "redSample": 102,
         "sample": 258
@@ -171,7 +198,7 @@
           "breakdownSample": 94,
           "breakoutHalf": 26.13,
           "breakoutOne": 1.8,
-          "breakoutOneHalf": 0.0,
+          "breakoutOneHalf": 0,
           "breakdownHalf": 41.49,
           "breakdownOne": 2.13,
           "breakdownOneHalf": 1.06
@@ -219,7 +246,7 @@
           "breakdownSample": 70,
           "breakoutHalf": 41.46,
           "breakoutOne": 12.2,
-          "breakoutOneHalf": 0.0,
+          "breakoutOneHalf": 0,
           "breakdownHalf": 38.57,
           "breakdownOne": 5.71,
           "breakdownOneHalf": 2.86
@@ -263,15 +290,46 @@
           "breakdownSample": 88,
           "breakoutHalf": 21.25,
           "breakoutOne": 1.25,
-          "breakoutOneHalf": 0.0,
+          "breakoutOneHalf": 0,
           "breakdownHalf": 18.18,
           "breakdownOne": 1.14,
-          "breakdownOneHalf": 0.0
+          "breakdownOneHalf": 0
         }
       }
     },
     "londonNy": {
       "note": "near 50/50; excluded from scoring"
+    },
+    "selectedQualifiers": {
+      "dataThrough": "2026-09-28",
+      "smallGapFill": {
+        "bucketMinPct": 0,
+        "bucketMaxPct": 0.19,
+        "up": {
+          "rate": 91.1,
+          "sample": 56
+        },
+        "down": {
+          "rate": 73.7,
+          "sample": 38
+        }
+      },
+      "insideDayBreakout": {
+        "bucketMinPct": 0,
+        "bucketMaxPct": 0.99,
+        "rate": 87,
+        "sample": 92
+      },
+      "priorDayColorLevel": {
+        "previousRedHighBreakGreenClose": {
+          "rate": 84.6,
+          "sample": 52
+        },
+        "previousGreenLowBreakRedClose": {
+          "rate": 86,
+          "sample": 43
+        }
+      }
     }
   }
 }

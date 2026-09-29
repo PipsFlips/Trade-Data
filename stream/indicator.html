@@ -152,44 +152,42 @@ canvas{display:block;width:100%;height:410px;border-radius:8px;background:#0d131
       <button class="winbtn" data-mode="1m">1M</button>
     </div>
     <div id="layerControls" style="display:flex;gap:4px;margin:0 0 7px 0;flex-wrap:wrap">
-      <button class="layerbtn active" data-layer="sessions">Sessions</button>
-      <button class="layerbtn active" data-layer="prior">Prior H/L</button>
-      <button class="layerbtn active" data-layer="profiles">Profiles</button>
-      <button class="layerbtn active" data-layer="pivots">1H pivots</button>
-      <button class="layerbtn active" data-layer="ob">15m OB</button>
-      <button class="layerbtn active" data-layer="orb">ORB</button>
-      <button class="layerbtn active" data-layer="middayOrb">11-12 ORB</button>
-      <button class="layerbtn active" data-layer="vwap">VWAP</button>
-      <button class="layerbtn active" data-layer="traps">Traps</button>
-      <button class="layerbtn active" data-layer="absorption">Absorption</button>
-      <button class="layerbtn active" data-layer="liquidity">Liquidity</button>
-      <button class="layerbtn active" data-layer="structure">Structure</button>
-      <button class="layerbtn active" data-layer="edgeful">Edgeful</button>
+      <button class="layerbtn" data-layer="sessions">Sessions</button>
+      <button class="layerbtn" data-layer="prior">Prior H/L</button>
+      <button class="layerbtn" data-layer="profiles">Profiles</button>
+      <button class="layerbtn" data-layer="pivots">1H pivots</button>
+      <button class="layerbtn" data-layer="ob">15m OB</button>
+      <button class="layerbtn" data-layer="orb">ORB</button>
+      <button class="layerbtn" data-layer="middayOrb">11-12 ORB</button>
+      <button class="layerbtn" data-layer="vwap">VWAP</button>
+      <button class="layerbtn" data-layer="traps">Traps</button>
+      <button class="layerbtn" data-layer="absorption">Absorption</button>
+      <button class="layerbtn" data-layer="liquidity">Liquidity</button>
+      <button class="layerbtn" data-layer="structure">Structure</button>
+      <button class="layerbtn" data-layer="edgeful">Edgeful</button>
     </div>
     <section id="edgeChart" class="edgeChart" aria-label="Edgeful chart context"></section>
     <canvas id="chart"></canvas>
   </div>
 
-  <div class="structureBox" id="marketStructureBox">
-    <div class="structureHead">
-      <div class="structureTitle">Market Structure</div>
-      <div class="structureState transition" id="structureState">TRANSITION · 0.0/10</div>
+  <details class="section collapsibleSection" id="marketStructureBox">
+    <summary class="collapsibleSectionSummary"><span>Market Structure</span><span class="structureState transition" id="structureState">TRANSITION · 0.0/10</span></summary>
+    <div style="padding:0 9px 9px">
+      <div class="structureMeta" id="structureMeta">Waiting for enough completed 5-minute structure.</div>
+      <div class="structureSub" id="structureSub">Score = weighted evidence alignment, not a probability.</div>
     </div>
-    <div class="structureMeta" id="structureMeta">Waiting for enough completed 5-minute structure.</div>
-    <div class="structureSub" id="structureSub">Score = weighted evidence alignment, not a probability.</div>
-  </div>
+  </details>
 
-  <div class="section" id="analysisBox">
-    <div class="analysisHead">
-      <h3 style="margin:0">Live market analysis</h3>
-      <div class="biasPill neutral" id="biasPill">NEUTRAL</div>
+  <details class="section collapsibleSection" id="analysisBox">
+    <summary class="collapsibleSectionSummary"><span>Live market analysis</span><span class="biasPill neutral" id="biasPill">NEUTRAL</span></summary>
+    <div style="padding:0 9px 9px">
+      <div class="analysisWhy" id="analysisWhy">Waiting for enough live data.</div>
+      <div class="setups" id="setups"></div>
+      <div class="analysisNote" id="analysisNote">Conditional setups only.</div>
     </div>
-    <div class="analysisWhy" id="analysisWhy">Waiting for enough live data.</div>
-    <div class="setups" id="setups"></div>
-    <div class="analysisNote" id="analysisNote">Conditional setups only.</div>
-  </div>
+  </details>
 
-  <details class="section collapsibleSection" open>
+  <details class="section collapsibleSection">
     <summary class="collapsibleSectionSummary">Edgeful historical context</summary>
     <div style="padding:0 9px 9px">
       <div class="rows" id="edgefulContext"></div>
@@ -197,22 +195,26 @@ canvas{display:block;width:100%;height:410px;border-radius:8px;background:#0d131
     </div>
   </details>
 
-  <div class="section">
-    <h3>Iceberg / absorption</h3>
+  <details class="section collapsibleSection">
+    <summary class="collapsibleSectionSummary">Iceberg / absorption</summary>
     <div class="rows" id="icebergs"></div>
-  </div>
+  </details>
 
-  <div class="section">
-    <h3>Resting liquidity</h3>
-    <div class="rows" id="restingLiquidity"></div>
-    <div class="liqMeta" id="liquidityMeta">Waiting for visible DOM depth.</div>
-  </div>
+  <details class="section collapsibleSection">
+    <summary class="collapsibleSectionSummary">Resting liquidity</summary>
+    <div style="padding:0 9px 9px">
+      <div class="rows" id="restingLiquidity"></div>
+      <div class="liqMeta" id="liquidityMeta">Waiting for visible DOM depth.</div>
+    </div>
+  </details>
 
-  <div class="section">
-    <h3>Trap signal / confirmed traps</h3>
-    <div class="reason" id="reason">No confirmed trap signal yet.</div>
-    <div class="rows" id="traps" style="margin-top:7px"></div>
-  </div>
+  <details class="section collapsibleSection">
+    <summary class="collapsibleSectionSummary">Trap signal / confirmed traps</summary>
+    <div style="padding:0 9px 9px">
+      <div class="reason" id="reason">No confirmed trap signal yet.</div>
+      <div class="rows" id="traps" style="margin-top:7px"></div>
+    </div>
+  </details>
 
   <details class="section collapsibleSection">
     <summary class="collapsibleSectionSummary">Nearest actionable levels</summary>
@@ -460,12 +462,8 @@ const levelColor=l=>{
 let chartBarCount=48;
 let chartMode="intraday";
 let lastData=null;
-const defaultChartLayers={sessions:true,prior:true,profiles:true,pivots:true,ob:true,orb:true,middayOrb:true,vwap:true,traps:true,absorption:true,liquidity:true,structure:true,edgeful:true};
+const defaultChartLayers={sessions:false,prior:false,profiles:false,pivots:false,ob:false,orb:false,middayOrb:false,vwap:false,traps:false,absorption:false,liquidity:false,structure:false,edgeful:false};
 let chartLayers={...defaultChartLayers};
-try{
-  const saved=JSON.parse(localStorage.getItem("mnqChartLayers")||"null");
-  if(saved&&typeof saved==="object") chartLayers={...defaultChartLayers,...saved};
-}catch{}
 const layerForLevel=l=>{
   const id=String(l?.id||"");
   if(["onh","onl","asiaH","asiaL","londonH","londonL"].includes(id)) return "sessions";
@@ -538,7 +536,7 @@ function orbVisible(ts=Date.now()){
   const minutes=pacificMinutes(ts);
   return minutes>=390&&minutes<780;
 }
-let edgeSelection=null,edgeSession=null,edgeMarkupKey=null;
+let edgeSelection=null,edgeSession=null,edgeMarkupKey=null,edgeNotesOpen=false;
 function renderEdgefulChart(data){
   const host=document.getElementById("edgeChart"),e=data.edgefulContext?.chart;
   host.hidden=chartLayers.edgeful===false;
@@ -550,6 +548,8 @@ function renderEdgefulChart(data){
   const selected=items.find(i=>i.key===edgeSelection)||[...items].sort((a,b)=>b.priority-a.priority)[0];
   const signature=JSON.stringify([e,selected?.key,chartMode,middayVisible(),orbVisible()]);
   if(signature!==edgeMarkupKey){
+    const existingNotes=host.querySelector(".edgeNotes");
+    if(existingNotes) edgeNotesOpen=existingNotes.open;
     edgeMarkupKey=signature;
     host.innerHTML='<div class="edgeHeading"><strong>EDGEFUL · HISTORICAL CONTEXT</strong><span id="edgePhase"></span></div><div class="edgeTabs" role="group" aria-label="Historical conditions"></div><div class="edgeState"></div><div class="edgeStat"></div><div class="edgeCaution">Historical frequencies · not trade win rates</div><details class="edgeNotes"><summary class="edgeSummary"></summary><div class="edgeDetail"></div><div class="edgeMeta"></div></details>';
     host.querySelector('#edgePhase').textContent=e.phase+' · '+e.sessionDate+(e.collectorStale?' · BARS STALE':'')+(e.rthCoverage===false?' · PARTIAL RTH':'');
@@ -564,6 +564,8 @@ function renderEdgefulChart(data){
     host.querySelector('.edgeDetail').textContent=(selected?.detail||'')+(chartMode==='1w'||chartMode==='1m'?' Overlays are shown on intraday 5-minute views.':'')+' Tap a condition to highlight its collector range or level. Off-screen levels do not change chart scale.';
     host.querySelector('.edgeSummary').textContent=e.ticker+' · '+e.lookback+' · through '+e.asOf+(e.stale?' · OLD BASELINE':'')+' · Source & method';
     host.querySelector('.edgeMeta').textContent=e.ticker+' · '+e.lookback+' · through '+e.asOf+(e.stale?' · OLD BASELINE':'')+' · baseline window '+e.baselineSessions+' sessions (not a conditional sample). '+e.note;
+    const notes=host.querySelector('.edgeNotes');
+    if(notes){notes.open=edgeNotesOpen;notes.addEventListener('toggle',()=>{edgeNotesOpen=notes.open;});}
   }
   return selected;
 }
@@ -1210,7 +1212,6 @@ document.querySelectorAll(".layerbtn").forEach(btn=>{
   btn.addEventListener("click",()=>{
     chartLayers[key]=!(chartLayers[key]!==false);
     btn.classList.toggle("active",chartLayers[key]!==false);
-    try{localStorage.setItem("mnqChartLayers",JSON.stringify(chartLayers));}catch{}
     if(lastData) drawChart(lastData);
   });
 });

@@ -885,6 +885,7 @@ function buildMarketAnalysis({currentPrice,levels,f1,f5,signal,traps,orderBlocks
   const profile=profiles?.rth||profiles?.session||null;
   const edgeRoot=MARKET_SYMBOL==="MES"?"ES":"NQ";
   const edgeHistory=EDGEFUL_12M[edgeRoot]||{};
+  const selectedEdge=edgeHistory.selectedQualifiers||{};
   const edgefulChecks=[];
   let edgefulPoints=0;
   const edgeClamp=v=>Math.max(-1,Math.min(1,+v||0));
@@ -963,45 +964,114 @@ function buildMarketAnalysis({currentPrice,levels,f1,f5,signal,traps,orderBlocks
     addEdgefulCheck("opening-candle continuation",side,edgeRateCheck(rate,"same-color RTH close "+edgePct(rate)));
   }
   const closedBars=(bars5m||[]).filter(b=>Date.parse(b.t)+300000<=Date.now());
-  const rangeBreak=(end,high,low)=>{
+  const ptNow=nowPT();
+  const rthDay=ptNow.startOf("day");
+  const rthStart=rthDay.set({hour:6,minute:30,second:0,millisecond:0});
+  const rthEnd=rthDay.set({hour:13,minute:0,second:0,millisecond:0});
+  const rthStop=ptNow<rthEnd?ptNow:rthEnd;
+  const currentRthBars=between(closedBars,rthStart,rthStop);
+  let priorRth=null,priorRthDate=null;
+  for(let n=1;n<=7&&!priorRth;n++){
+    const d=rthDay.minus({days:n}),s=d.set({hour:6,minute:30,second:0,millisecond:0}),t=d.set({hour:13,minute:0,second:0,millisecond:0});
+    const xs=between(closedBars,s,t);
+    // Require near-complete RTH coverage before applying prior-day bucket qualifiers.
+    if(xs.length>=70){priorRth=summary(xs);priorRthDate=d.toISODate();}
+  }
+  const pdh=(levels||[]).find(x=>x.id==="pdh"),pdl=(levels||[]).find(x=>x.id==="pdl");
+  const rangeBreak=(end,high,low,stop=rthEnd)=>{
     if(!end||!Number.isFinite(+high)||!Number.isFinite(+low)) return {up:false,down:false};
-    const after=closedBars.filter(b=>Date.parse(b.t)>=Date.parse(end));
+    const endMs=Date.parse(end),stopMs=stop?.toMillis?.()??Date.parse(stop);
+    const after=closedBars.filter(b=>Date.parse(b.t)>=endMs&&(!Number.isFinite(stopMs)||Date.parse(b.t)<stopMs));
     return {up:after.some(b=>+b.c>+high),down:after.some(b=>+b.c<+low)};
   };
+  const currentPriorBreak={
+    up:Boolean(pdh&&currentRthBars.some(b=>+b.c>+pdh.price)),
+    down:Boolean(pdl&&currentRthBars.some(b=>+b.c<+pdl.price))
+  };
+
   if(orb?.formed){
     const br=rangeBreak(orb.end,orb.high,orb.low);
     const side=br.up&&!br.down?"BUY":br.down&&!br.up?"SELL":null;
     if(side) addEdgefulCheck("15m ORB continuation",side,edgeSideCheck(edgeHistory.orb15,side));
   }
-  const ptNow=nowPT();
-  const rthDay=ptNow.startOf("day");
-  const ibStart=rthDay.set({hour:6,minute:30,second:0,millisecond:0});
+
+  const ibStart=rthStart;
   const ibEnd=rthDay.set({hour:7,minute:30,second:0,millisecond:0});
   if(ptNow>=ibEnd){
     const ibRows=between(closedBars,ibStart,ibEnd);
     if(ibRows.length>=12){
       const ib=summary(ibRows),br=rangeBreak(ibEnd,ib.high,ib.low);
       const side=br.up&&!br.down?"BUY":br.down&&!br.up?"SELL":null;
-      if(side) addEdgefulCheck("60m IB continuation",side,edgeSideCheck(edgeHistory.ib60,side));
+      if(side){
+        const q=selectedEdge.ib60Size;
+        const ibPct=Number.isFinite(+ib.open)&&+ib.open!==0?100*(+ib.high-+ib.low)/Math.abs(+ib.open):null;
+        const sizeMatch=edgeRoot==="NQ"&&q&&Number.isFinite(ibPct)&&ibPct>=+q.bucketMinPct&&ibPct<=+q.bucketMaxPct;
+        if(sizeMatch){
+          addEdgefulCheck("60m IB size bucket",side,edgeRateCheck(q.singleBreak,
+            q.bucketMinPct.toFixed(1)+"–"+q.bucketMaxPct.toFixed(2)+"% IB → one-side 5m-close break "+edgePct(q.singleBreak)+" · n="+q.sample+" · current IB "+ibPct.toFixed(2)+"%"));
+        }else{
+          addEdgefulCheck("60m IB continuation",side,edgeSideCheck(edgeHistory.ib60,side));
+        }
+      }
     }
   }
+
+  // Inside-day breakout frequency is an expansion qualifier only. Direction is supplied
+  // by the first live, close-confirmed break of the prior RTH range.
+  const insideQ=selectedEdge.insideDayBreakout;
+  if(priorRth&&currentRthBars.length&&insideQ){
+    const currentOpen=+currentRthBars[0].o;
+    const openedInside=currentOpen>+priorRth.low&&currentOpen<+priorRth.high;
+    const priorRangePct=+priorRth.close!==0?100*(+priorRth.high-+priorRth.low)/Math.abs(+priorRth.close):null;
+    const bucketMatch=Number.isFinite(priorRangePct)&&priorRangePct>=+insideQ.bucketMinPct&&priorRangePct<=+insideQ.bucketMaxPct;
+    const side=currentPriorBreak.up&&!currentPriorBreak.down?"BUY":currentPriorBreak.down&&!currentPriorBreak.up?"SELL":null;
+    if(openedInside&&bucketMatch&&side){
+      addEdgefulCheck("inside-day breakout bucket",side,edgeRateCheck(insideQ.rate,
+        "inside RTH open · prior range "+priorRangePct.toFixed(2)+"% · breakout frequency "+edgePct(insideQ.rate)+" · n="+insideQ.sample+" · direction from live 5m close"));
+    }
+  }
+
   if(middayOrb?.formed && middayOrb.active && (middayOrb.closeState==="UP BREAK"||middayOrb.closeState==="DOWN BREAK")){
     const side=middayOrb.closeState==="UP BREAK"?"BUY":"SELL";
     addEdgefulCheck("11-12 ORB continuation",side,edgeSideCheck(edgeHistory.middayOrb,side));
   }
-  if(orb?.formed){
-    const pdh=(levels||[]).find(x=>x.id==="pdh"),pdl=(levels||[]).find(x=>x.id==="pdl");
+  let priorColorLevelApplied=false;
+  if(edgeRoot==="ES"&&priorRth&&currentRthBars.length){
+    const q=selectedEdge.priorDayColorLevel||{};
+    const previousRed=+priorRth.close<+priorRth.open,previousGreen=+priorRth.close>+priorRth.open;
+    if(previousRed&&currentPriorBreak.up&&pdh&&currentPrice>+pdh.price&&q.previousRedHighBreakGreenClose){
+      const s=q.previousRedHighBreakGreenClose;
+      addEdgefulCheck("prior-red + PDH break","BUY",edgeRateCheck(s.rate,
+        "previous red day → PDH broken / green RTH close "+edgePct(s.rate)+" · n="+s.sample+" · prior RTH "+priorRthDate));
+      priorColorLevelApplied=true;
+    }else if(previousGreen&&currentPriorBreak.down&&pdl&&currentPrice<+pdl.price&&q.previousGreenLowBreakRedClose){
+      const s=q.previousGreenLowBreakRedClose;
+      addEdgefulCheck("prior-green + PDL break","SELL",edgeRateCheck(s.rate,
+        "previous green day → PDL broken / red RTH close "+edgePct(s.rate)+" · n="+s.sample+" · prior RTH "+priorRthDate));
+      priorColorLevelApplied=true;
+    }
+  }
+  if(orb?.formed&&!priorColorLevelApplied){
     if(pdh&&Number.isFinite(+pdh.price)&&+currentPrice>+pdh.price){
       addEdgefulCheck("prior-high follow-through","BUY",edgeRateCheck(edgeHistory.prevDay?.highFollowGreen,"RTH close green after PDH break "+edgePct(edgeHistory.prevDay?.highFollowGreen)));
     }else if(pdl&&Number.isFinite(+pdl.price)&&+currentPrice<+pdl.price){
       addEdgefulCheck("prior-low follow-through","SELL",edgeRateCheck(edgeHistory.prevDay?.lowFollowRed,"RTH close red after PDL break "+edgePct(edgeHistory.prevDay?.lowFollowRed)));
     }
   }
-  const activeGap=(gaps||[]).find(g=>g.near&&!g.filled);
+  const activeGap=(gaps||[]).find(g=>g.kind==="RTH"&&g.near&&!g.filled);
   if(activeGap){
     const side=activeGap.fillDirection;
-    const rate=activeGap.direction==="UP"?edgeHistory.gapFill?.up:edgeHistory.gapFill?.down;
-    addEdgefulCheck("gap-fill tendency",side,edgeRateCheck(rate,(activeGap.direction==="UP"?"up":"down")+" gap full-fill "+edgePct(rate)));
+    const q=selectedEdge.smallGapFill;
+    const gapPct=Number.isFinite(+activeGap.priorClose)&&+activeGap.priorClose!==0?100*(+activeGap.size)/Math.abs(+activeGap.priorClose):null;
+    const bucketMatch=q&&Number.isFinite(gapPct)&&gapPct>0&&gapPct<=+q.bucketMaxPct;
+    const sized=bucketMatch?(activeGap.direction==="UP"?q.up:q.down):null;
+    if(sized&&Number.isFinite(+sized.rate)){
+      addEdgefulCheck("size-conditioned gap fill",side,edgeRateCheck(sized.rate,
+        (activeGap.direction==="UP"?"up":"down")+" RTH gap "+gapPct.toFixed(2)+"% · full fill "+edgePct(sized.rate)+" · n="+sized.sample));
+    }else{
+      const rate=activeGap.direction==="UP"?edgeHistory.gapFill?.up:edgeHistory.gapFill?.down;
+      addEdgefulCheck("gap-fill tendency",side,edgeRateCheck(rate,(activeGap.direction==="UP"?"up":"down")+" gap full-fill "+edgePct(rate)));
+    }
   }
   const overnightStart=(ptNow.hour>=15?ptNow:ptNow.minus({days:1})).startOf("day").set({hour:15,minute:0,second:0,millisecond:0});
   const overnightEnd=overnightStart.plus({days:1}).set({hour:6,minute:30,second:0,millisecond:0});
