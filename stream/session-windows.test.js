@@ -57,3 +57,12 @@ test('browser script parses and session labels match canonical ET windows',()=>{
   for(const label of ['Asia 20:00 ET','London 03:00 ET','NY 09:30 ET','03:00–08:30 ET']) assert.ok(html.includes(label));
   assert.ok(!html.includes('05:20 PT'));
 });
+
+
+test('clean-start indicator UI defaults overlays and panels closed',()=>{
+  assert.ok(html.includes('const defaultChartLayers={sessions:false,prior:false,profiles:false,pivots:false,ob:false,orb:false,middayOrb:false,vwap:false,traps:false,absorption:false,liquidity:false,structure:false,edgeful:false}'));
+  assert.equal((html.match(/class="layerbtn active"/g)||[]).length,0);
+  assert.equal((html.match(/<details class="section collapsibleSection" open>/g)||[]).length,0);
+  assert.ok(html.includes("const notesOpen=host.querySelector('.edgeNotes')?.open===true"));
+  assert.ok(html.includes('edgeNotes.open=notesOpen'));
+});
