@@ -598,32 +598,7 @@ function currentOrb(five,f5){
   };
 }
 
-const EDGEFUL_12M={
-  NQ:{
-    asOf:"2026-09-25",sample:257,
-    overnight:{anyBreak:89.5,oneSide:73.9,double:15.6,noBreak:10.5},
-    ib60:{single:81.7,double:9.7,neither:8.6},
-    prevDay:{highBreak:58,highFollowGreen:80,lowBreak:44,lowFollowRed:79},
-    gapFill:{up:52,down:58},
-    opening15:{greenToGreen:65.2,redToRed:55.5},
-    orb15:{oneSide:63.8,double:35.8,noBreak:.4},
-    atr14:{respected:69.6,exceeded:30.4},
-    adr14:{value:316.16,respected:55.6,exceeded:44.4},
-    londonNy:{note:"near 50/50; excluded from scoring"}
-  },
-  ES:{
-    asOf:"2026-09-25",sample:257,
-    overnight:{anyBreak:93.0,oneSide:73.9,double:19.1,noBreak:7.0},
-    ib60:{single:79.8,double:15.2,neither:5.1},
-    prevDay:{highBreak:56,highFollowGreen:78,lowBreak:46,lowFollowRed:80},
-    gapFill:{up:60,down:56},
-    opening15:{greenToGreen:61.3,redToRed:55.8},
-    orb15:{oneSide:59.1,double:40.5,noBreak:.4},
-    atr14:{respected:68.1,exceeded:31.9},
-    adr14:{value:53.57,respected:55.6,exceeded:44.4},
-    londonNy:{note:"near 50/50; excluded from scoring"}
-  }
-};
+const EDGEFUL_12M=require("./edgeful-baselines.json");
 
 function buildEdgefulContext({bars5m,orb,middayOrb,gaps,levels}){
   const root=MARKET_SYMBOL==="MES"?"ES":"NQ", e=EDGEFUL_12M[root];
@@ -711,7 +686,7 @@ function buildEdgefulContext({bars5m,orb,middayOrb,gaps,levels}){
   }
 
   return {
-    source:"Edgeful",ticker:root,lookback:"12mo",asOf:e.asOf,
+    source:EDGEFUL_12M.source||"Edgeful",ticker:root,lookback:EDGEFUL_12M.lookback||"12mo",asOf:e.asOf,refreshedOn:EDGEFUL_12M.refreshedOn||null,
     items:items.filter(x=>x.applicable).slice(-6),
     excluded:[{key:"londonNy",reason:e.londonNy.note}],
     note:"Historical conditional frequencies only; not current-trade probabilities and not included in the 0–10 score unless explicitly stated."
@@ -724,9 +699,18 @@ function currentMiddayOrb(five){
   const start=day.set({hour:11,minute:0,second:0,millisecond:0});
   const end=day.set({hour:12,minute:0,second:0,millisecond:0});
   const close=day.set({hour:13,minute:0,second:0,millisecond:0});
-  const stats=MARKET_SYMBOL==="MES"
-    ? {source:"Edgeful",lookback:"12mo",asOf:"2026-09-25",sampleSize:248,wick:{oneSidePct:73.8,doublePct:14.1,noBreakPct:12.1},close:{oneSidePct:67.7,doublePct:6.5,noBreakPct:25.8}}
-    : {source:"Edgeful",lookback:"12mo",asOf:"2026-09-25",sampleSize:248,wick:{oneSidePct:76.6,doublePct:12.9,noBreakPct:10.5},close:{oneSidePct:73.0,doublePct:4.0,noBreakPct:23.0}};
+  const edgeRoot=MARKET_SYMBOL==="MES"?"ES":"NQ";
+  const edgeBase=EDGEFUL_12M[edgeRoot]||{};
+  const mid=edgeBase.middayOrb||{};
+  const stats={
+    source:EDGEFUL_12M.source||"Edgeful",
+    lookback:EDGEFUL_12M.lookback||"12mo",
+    asOf:edgeBase.asOf||null,
+    refreshedOn:EDGEFUL_12M.refreshedOn||null,
+    sampleSize:mid.sample||null,
+    wick:mid.wick||{},
+    close:mid.close||{}
+  };
   if(now<end) return {formed:false,start:start.toISO(),end:end.toISO(),monitorEnd:close.toISO(),high:null,low:null,stats};
   const rows=between(five||[],start,end);
   if(!rows.length) return {formed:false,start:start.toISO(),end:end.toISO(),monitorEnd:close.toISO(),high:null,low:null,stats};
