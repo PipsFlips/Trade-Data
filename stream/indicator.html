@@ -296,7 +296,7 @@ canvas{display:block;width:100%;height:410px;border-radius:8px;background:#0d131
       <details>
         <summary>Edgeful historical context</summary>
         <div class="legendBody">
-          Edgeful is used as a <b>historical-condition layer</b>, not as live order flow and not as a replacement for the collector. The panel can surface overnight-range behavior, 15-minute ORB behavior, 60-minute Initial Balance behavior, prior-day high/low follow-through, RTH gap-fill frequency, opening-candle continuation, first-break extension and retracement behavior, and ATR/ADR context when the corresponding live condition exists. Historical percentages remain separate from the system's 0–10 live evidence score. London-to-New-York direction correlation is currently excluded because the trailing sample was approximately 50/50 and did not show a useful directional edge.
+          Edgeful is used as a <b>historical-condition layer</b>, not as live order flow and not as a replacement for the collector. The panel can surface overnight-range behavior, 15-minute ORB behavior, 60-minute Initial Balance behavior, prior-day high/low follow-through, RTH gap-fill frequency, opening-candle continuation, first-break extension and retracement behavior, and ATR/ADR context when the corresponding live condition exists. The live analysis uses matching Edgeful statistics as low-weight directional checks for bias and buy/sell suggestions; current collector price, structure, delta, VWAP, and liquidity remain the primary evidence. London-to-New-York direction correlation is currently excluded because the trailing sample was approximately 50/50 and did not show a useful directional edge.
         </div>
       </details>
       <details>
@@ -1087,7 +1087,7 @@ function renderEdgefulContext(data){
   const excluded=(e.excluded||[]).map(x=>x.reason).filter(Boolean);
   document.getElementById("edgefulMeta").textContent=
     (e.source?e.source+" "+(e.ticker||"")+" · "+(e.lookback||"")+" · data through "+(e.asOf||"—")+(e.refreshedOn?" · refreshed "+e.refreshedOn:"")+" · ":"")+ 
-    "historical condition and continuation statistics only; separate from the 0–10 live score"+
+    "historical condition and continuation statistics; low-weight analysis qualifier, with live collector evidence primary"+
     (excluded.length?" · London→NY correlation excluded: "+excluded[0]:"");
 }
 
@@ -1112,7 +1112,10 @@ function renderAnalysis(data){
       (x.context?'<div class="setupLine"><b>Context:</b> '+x.context+'</div>':'')+
     '</div>';
   }).join("")||'<div class="reason">No qualified setup right now. Wait for price to interact with a major level, trap, or order block.</div>';
-  document.getElementById("analysisNote").textContent=a.note||"Conditional setups only; wait for confirmation.";
+  const edge=a.edgeful||{};
+  const edgeChecks=(edge.checks||[]).slice(0,3).map(x=>x.label+" "+x.text).join(" · ");
+  const edgeNote=edgeChecks?"Edgeful "+(edge.bias||"NEUTRAL")+" qualifier · "+edgeChecks:"Edgeful: no applicable historical condition check.";
+  document.getElementById("analysisNote").textContent=(a.note||"Conditional setups only; wait for confirmation.")+" "+edgeNote;
 }
 
 async function refresh(){

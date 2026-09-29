@@ -607,7 +607,7 @@ function currentOrb(five,f5){
 
 const EDGEFUL_12M=require("./edgeful-baselines.json");
 
-// Chart-only historical context. Never feeds setup scores or substitutes prices.
+// Historical context for the chart and analysis. It never substitutes collector prices or live order flow.
 function buildEdgefulChartContext(bars5m){
   const now=nowPT().setZone("America/New_York");
   const day=(now.hour>=18?now.plus({days:1}):now).startOf("day");
@@ -737,7 +737,7 @@ function buildEdgefulChartContext(bars5m){
   const stale=now.diff(DateTime.fromISO(e.asOf,{zone:"America/New_York"}),"days").days>10;
   return {version:1,lastCompleted,collectorStale,rthCoverage,sessionDate:day.toISODate(),phase:now<open?"PRE-RTH":now>=close?"RTH COMPLETE":"RTH",items,
     source:"Edgeful",ticker:root,asOf:e.asOf,lookback:EDGEFUL_12M.lookback,baselineSessions:e.sample,stale,
-    note:"Historical frequencies and continuation outcomes, not trade win rates. Collector prices; completed 5m bars. Separate from live /10 score."};
+    note:"Historical frequencies and continuation outcomes, not trade win rates. Collector prices; completed 5m bars. Analysis may use these as a low-weight qualifier, never as standalone live evidence."};
 }
 
 function buildEdgefulContext({bars5m}){
@@ -748,7 +748,7 @@ function buildEdgefulContext({bars5m}){
     asOf:chart.asOf,refreshedOn:EDGEFUL_12M.refreshedOn||null,
     items:chart.items.map(x=>({key:x.key,label:x.label,text:x.state+" · "+x.stat,applicable:Boolean(x.geometry)})),
     excluded:[{key:"londonNy",reason:e.londonNy?.note||"Excluded"}],
-    note:"Historical conditional frequencies and continuation outcomes only; not current-trade probabilities and never included in the 0–10 live score."
+    note:"Historical conditional frequencies and continuation outcomes only; not current-trade probabilities. Analysis uses them as a low-weight qualifier while live collector evidence remains primary."
   };
 }
 
@@ -883,6 +883,41 @@ function buildMarketAnalysis({currentPrice,levels,f1,f5,signal,traps,orderBlocks
   let biasPoints=0;
   const reasons=[];
   const profile=profiles?.rth||profiles?.session||null;
+  const edgeRoot=MARKET_SYMBOL==="MES"?"ES":"NQ";
+  const edgeHistory=EDGEFUL_12M[edgeRoot]||{};
+  const edgefulChecks=[];
+  let edgefulPoints=0;
+  const edgeClamp=v=>Math.max(-1,Math.min(1,+v||0));
+  const edgePct=v=>Number.isFinite(+v)?(+v).toFixed(1)+"%":"unavailable";
+  const edgeSignedPct=v=>Number.isFinite(+v)?((+v>=0?"+":"")+(+v).toFixed(2)+"%"):"unavailable";
+  const edgeRateCheck=(rate,text)=>({score:edgeClamp((+rate-50)/10),text:text||("historical continuation "+edgePct(rate))});
+  const edgeSideCheck=(entry,side)=>{
+    const c=entry?.continuation||{},p=c.performance||{},r=c.retracement||{};
+    const long=side==="BUY";
+    const avg=long?(p.avgUpExtensionPct??p.avgBreakoutExtensionPct):(p.avgDownExtensionPct??p.avgBreakdownExtensionPct);
+    const half=long?r.breakoutHalf:r.breakdownHalf;
+    const sample=long?(p.breakoutSample??r.breakoutSample):(p.breakdownSample??r.breakdownSample);
+    const parts=[];let score=0;
+    const breakRate=entry?.oneSide??entry?.single??entry?.close?.oneSidePct;
+    if(Number.isFinite(+breakRate)) parts.push("break profile "+edgePct(breakRate));
+    if(Number.isFinite(+avg)){
+      score+=(long?(+avg>0):(+avg<0)) ? .5 : -.5;
+      parts.push("avg extension "+edgeSignedPct(avg));
+    }
+    if(Number.isFinite(+half)){
+      score+=(+half<=50) ? .5 : -.5;
+      parts.push("0.5x retrace "+edgePct(half));
+    }
+    if(Number.isFinite(+sample)) parts.push("n="+sample);
+    return {score:edgeClamp(score),text:parts.join(" · ")||"continuation sample unavailable"};
+  };
+  const addEdgefulCheck=(label,side,check)=>{
+    if(!side||!check||!Number.isFinite(+check.score)) return;
+    const support=edgeClamp(check.score);
+    edgefulPoints+=side==="BUY"?support:-support;
+    edgefulChecks.push({label,side,support:+support.toFixed(2),text:check.text});
+    if(Math.abs(support)>=.25) reasons.push("Edgeful "+label+" "+(support>0?"supports ":"conflicts with ")+side+" · "+check.text);
+  };
 
   if(Number.isFinite(activeVwap)){
     if(currentPrice>activeVwap){biasPoints+=2;reasons.push("price above active VWAP");}
@@ -920,15 +955,81 @@ function buildMarketAnalysis({currentPrice,levels,f1,f5,signal,traps,orderBlocks
   if(signal?.side==="BUY" && signal.score>=65){biasPoints+=2;reasons.push("BUY setup score "+signal.score);}
   if(signal?.side==="SELL" && signal.score>=65){biasPoints-=2;reasons.push("SELL setup score "+signal.score);}
 
+  // Edgeful is a low-weight historical qualifier. It can strengthen or weaken
+  // a live direction, but it never creates a setup without collector evidence.
+  if(orb?.formed && Number.isFinite(+orb.open)&&Number.isFinite(+orb.close) && +orb.close!==+orb.open){
+    const side=+orb.close>+orb.open?"BUY":"SELL";
+    const rate=side==="BUY"?edgeHistory.opening15?.greenToGreen:edgeHistory.opening15?.redToRed;
+    addEdgefulCheck("opening-candle continuation",side,edgeRateCheck(rate,"same-color RTH close "+edgePct(rate)));
+  }
+  const closedBars=(bars5m||[]).filter(b=>Date.parse(b.t)+300000<=Date.now());
+  const rangeBreak=(end,high,low)=>{
+    if(!end||!Number.isFinite(+high)||!Number.isFinite(+low)) return {up:false,down:false};
+    const after=closedBars.filter(b=>Date.parse(b.t)>=Date.parse(end));
+    return {up:after.some(b=>+b.c>+high),down:after.some(b=>+b.c<+low)};
+  };
+  if(orb?.formed){
+    const br=rangeBreak(orb.end,orb.high,orb.low);
+    const side=br.up&&!br.down?"BUY":br.down&&!br.up?"SELL":null;
+    if(side) addEdgefulCheck("15m ORB continuation",side,edgeSideCheck(edgeHistory.orb15,side));
+  }
+  const ptNow=nowPT();
+  const rthDay=ptNow.startOf("day");
+  const ibStart=rthDay.set({hour:6,minute:30,second:0,millisecond:0});
+  const ibEnd=rthDay.set({hour:7,minute:30,second:0,millisecond:0});
+  if(ptNow>=ibEnd){
+    const ibRows=between(closedBars,ibStart,ibEnd);
+    if(ibRows.length>=12){
+      const ib=summary(ibRows),br=rangeBreak(ibEnd,ib.high,ib.low);
+      const side=br.up&&!br.down?"BUY":br.down&&!br.up?"SELL":null;
+      if(side) addEdgefulCheck("60m IB continuation",side,edgeSideCheck(edgeHistory.ib60,side));
+    }
+  }
+  if(middayOrb?.formed && middayOrb.active && (middayOrb.closeState==="UP BREAK"||middayOrb.closeState==="DOWN BREAK")){
+    const side=middayOrb.closeState==="UP BREAK"?"BUY":"SELL";
+    addEdgefulCheck("11-12 ORB continuation",side,edgeSideCheck(edgeHistory.middayOrb,side));
+  }
+  if(orb?.formed){
+    const pdh=(levels||[]).find(x=>x.id==="pdh"),pdl=(levels||[]).find(x=>x.id==="pdl");
+    if(pdh&&Number.isFinite(+pdh.price)&&+currentPrice>+pdh.price){
+      addEdgefulCheck("prior-high follow-through","BUY",edgeRateCheck(edgeHistory.prevDay?.highFollowGreen,"RTH close green after PDH break "+edgePct(edgeHistory.prevDay?.highFollowGreen)));
+    }else if(pdl&&Number.isFinite(+pdl.price)&&+currentPrice<+pdl.price){
+      addEdgefulCheck("prior-low follow-through","SELL",edgeRateCheck(edgeHistory.prevDay?.lowFollowRed,"RTH close red after PDL break "+edgePct(edgeHistory.prevDay?.lowFollowRed)));
+    }
+  }
+  const activeGap=(gaps||[]).find(g=>g.near&&!g.filled);
+  if(activeGap){
+    const side=activeGap.fillDirection;
+    const rate=activeGap.direction==="UP"?edgeHistory.gapFill?.up:edgeHistory.gapFill?.down;
+    addEdgefulCheck("gap-fill tendency",side,edgeRateCheck(rate,(activeGap.direction==="UP"?"up":"down")+" gap full-fill "+edgePct(rate)));
+  }
+  const overnightStart=(ptNow.hour>=15?ptNow:ptNow.minus({days:1})).startOf("day").set({hour:15,minute:0,second:0,millisecond:0});
+  const overnightEnd=overnightStart.plus({days:1}).set({hour:6,minute:30,second:0,millisecond:0});
+  if(ptNow>=overnightEnd){
+    const overnightRows=between(closedBars,overnightStart,overnightEnd);
+    if(overnightRows.length){
+      const overnight=summary(overnightRows),side=+overnight.close>+overnight.open?"BUY":+overnight.close<+overnight.open?"SELL":null;
+      if(side){
+        const rate=side==="BUY"?edgeHistory.overnight?.continuation?.greenToGreen:edgeHistory.overnight?.continuation?.redToRed;
+        addEdgefulCheck("overnight continuation",side,edgeRateCheck(rate,(side==="BUY"?"green":"red")+" overnight to same-color RTH close "+edgePct(rate)));
+      }
+    }
+  }
+  biasPoints+=edgefulPoints;
+
   const bias=biasPoints>=3?"BULLISH":biasPoints<=-3?"BEARISH":Math.abs(biasPoints)<=1?"NEUTRAL":"MIXED";
   const strength=Math.abs(biasPoints)>=6?"strong":Math.abs(biasPoints)>=3?"moderate":"light";
   const major=(levels||[]).filter(l=>Number.isFinite(+l.price)&&l.priority>=80);
   const above=major.filter(l=>+l.price>currentPrice).sort((a,b)=>+a.price-+b.price);
   const below=major.filter(l=>+l.price<currentPrice).sort((a,b)=>+b.price-+a.price);
   const setups=[];
-  const edgeRoot=MARKET_SYMBOL==="MES"?"ES":"NQ";
-  const edgeHistory=EDGEFUL_12M[edgeRoot]||{};
-  const edgeSignedPct=v=>Number.isFinite(+v)?((+v>=0?"+":"")+(+v).toFixed(2)+"%"):"unavailable";
+  const edgefulBias=edgefulPoints>=.75?"BUY":edgefulPoints<=-.75?"SELL":"NEUTRAL";
+  const edgefulSetupAdjustment=side=>edgefulBias==="NEUTRAL"?0:edgefulBias===side?5:-5;
+  const edgefulSetupContext=side=>{
+    const checks=edgefulChecks.filter(x=>x.side===side&&Math.abs(x.support)>=.25).slice(0,2);
+    if(!checks.length) return edgefulBias!=="NEUTRAL"&&edgefulBias!==side?"Edgeful qualifier conflicts; require stronger live confirmation":"";
+    return "Edgeful qualifier "+(edgefulBias===side?"supports ":edgefulBias!=="NEUTRAL"?"conflicts with ":"")+side+" · "+checks.map(x=>x.label+" "+x.text).join("; ");
+  };
   const edgeContinuationContext=(entry,side)=>{
     const c=entry?.continuation||{},p=c.performance||{},r=c.retracement||{};
     const long=side==="BUY";
@@ -1126,6 +1227,14 @@ function buildMarketAnalysis({currentPrice,levels,f1,f5,signal,traps,orderBlocks
     });
   }
 
+  // Apply the net Edgeful qualifier to every candidate suggestion. This is
+  // deliberately small: live collector flow, structure, VWAP, and location
+  // remain the primary evidence and can override a historical lean.
+  for(const setup of setups){
+    if(Number.isFinite(+setup.quality)) setup.quality=Math.max(0,Math.min(100,+setup.quality+edgefulSetupAdjustment(setup.side)));
+    const edgeContext=edgefulSetupContext(setup.side);
+    if(edgeContext) setup.context=(setup.context?setup.context+" · ":"")+edgeContext;
+  }
   const dedup=[];
   for(const x of setups.sort((a,b)=>(+b.quality||0)-(+a.quality||0))){
     if(dedup.some(y=>y.title===x.title)) continue;
@@ -1133,9 +1242,10 @@ function buildMarketAnalysis({currentPrice,levels,f1,f5,signal,traps,orderBlocks
     if(dedup.length>=3) break;
   }
   return {
-    bias,strength,points:biasPoints,reasons:reasons.slice(0,5),setups:dedup,
+    bias,strength,points:+biasPoints.toFixed(2),reasons:reasons.slice(0,5),setups:dedup,
+    edgeful:{bias:edgefulBias,points:+edgefulPoints.toFixed(2),checks:edgefulChecks},
     asOf:new Date().toISOString(),
-    note:"Conditional setups only; bias, volume, delta, VWAP, traps, 15m OBs, ORB and unfilled gap confluence are evaluated."
+    note:"Conditional setups only; live collector evidence remains primary. Edgeful 12-month condition and continuation statistics are low-weight qualifiers for bias and buy/sell suggestions, not standalone trade probabilities."
   };
 }
 
