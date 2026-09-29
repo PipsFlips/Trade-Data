@@ -598,6 +598,47 @@ function currentOrb(five,f5){
   };
 }
 
+function currentMiddayOrb(five){
+  const now=nowPT();
+  const day=now.startOf("day");
+  const start=day.set({hour:11,minute:0,second:0,millisecond:0});
+  const end=day.set({hour:12,minute:0,second:0,millisecond:0});
+  const close=day.set({hour:13,minute:0,second:0,millisecond:0});
+  const stats=MARKET_SYMBOL==="MES"
+    ? {source:"Edgeful",lookback:"12mo",asOf:"2026-09-25",sampleSize:248,wick:{oneSidePct:73.8,doublePct:14.1,noBreakPct:12.1},close:{oneSidePct:67.7,doublePct:6.5,noBreakPct:25.8}}
+    : {source:"Edgeful",lookback:"12mo",asOf:"2026-09-25",sampleSize:248,wick:{oneSidePct:76.6,doublePct:12.9,noBreakPct:10.5},close:{oneSidePct:73.0,doublePct:4.0,noBreakPct:23.0}};
+  if(now<end) return {formed:false,start:start.toISO(),end:end.toISO(),monitorEnd:close.toISO(),high:null,low:null,stats};
+  const rows=between(five||[],start,end);
+  if(!rows.length) return {formed:false,start:start.toISO(),end:end.toISO(),monitorEnd:close.toISO(),high:null,low:null,stats};
+  const z=summary(rows);
+  const afterEnd=now<close?now:close;
+  const after=between(five||[],end,afterEnd);
+  let wickUp=false,wickDown=false,closeUp=false,closeDown=false,firstWickBreak=null,firstCloseBreak=null;
+  for(const b of after){
+    if(!firstWickBreak){
+      if(+b.h>z.high) firstWickBreak={side:"UP",time:b.t,price:+b.h};
+      else if(+b.l<z.low) firstWickBreak={side:"DOWN",time:b.t,price:+b.l};
+    }
+    if(+b.h>z.high) wickUp=true;
+    if(+b.l<z.low) wickDown=true;
+    if(!firstCloseBreak){
+      if(+b.c>z.high) firstCloseBreak={side:"UP",time:b.t,price:+b.c};
+      else if(+b.c<z.low) firstCloseBreak={side:"DOWN",time:b.t,price:+b.c};
+    }
+    if(+b.c>z.high) closeUp=true;
+    if(+b.c<z.low) closeDown=true;
+  }
+  const state=(up,down)=>up&&down?"DOUBLE BREAK":up?"UP BREAK":down?"DOWN BREAK":"NO BREAK";
+  return {
+    formed:true,start:start.toISO(),end:end.toISO(),monitorEnd:close.toISO(),
+    high:z.high,low:z.low,open:z.open,close:z.close,
+    wickState:state(wickUp,wickDown),closeState:state(closeUp,closeDown),
+    wickUp,wickDown,closeUp,closeDown,firstWickBreak,firstCloseBreak,
+    active:now>=end&&now<close,
+    stats
+  };
+}
+
 function stabilizeAnalysis(raw){
   const key=(raw?.bias||"NEUTRAL")+"|"+((raw?.setups||[])[0]?.title||"none");
   const now=Date.now();
@@ -669,7 +710,7 @@ function stabilizeActionableSignal(candidate){
   return actionableSignalState.active;
 }
 
-function buildMarketAnalysis({currentPrice,levels,f1,f5,signal,traps,orderBlocks,globexVwap,rthVwap,sessionCvd,atr5,orb,bars5m,delta15,profiles,icebergs,gaps}){
+function buildMarketAnalysis({currentPrice,levels,f1,f5,signal,traps,orderBlocks,globexVwap,rthVwap,sessionCvd,atr5,orb,middayOrb,bars5m,delta15,profiles,icebergs,gaps}){
   const closed1=lastClosedBar(f1||[],1);
   const closed5=lastClosedBar(f5||[],5);
   const closed5s=(f5||[]).filter(b=>Date.parse(b.t)+300000<=Date.now());
@@ -826,6 +867,31 @@ function buildMarketAnalysis({currentPrice,levels,f1,f5,signal,traps,orderBlocks
     };
     if(nearHi && (longBias || currentPrice>=+orb.high)) orbSetup("BUY");
     if(nearLo && (shortBias || currentPrice<=+orb.low)) orbSetup("SELL");
+  }
+
+  // Midday ORB: 11:00-12:00 PT range, monitored from 12:00-13:00 PT.
+  // Edgeful 12-month context is shown separately as historical frequency, not a trade probability.
+  if(middayOrb?.formed && middayOrb.active && closed5 && (middayOrb.closeState==="UP BREAK"||middayOrb.closeState==="DOWN BREAK")){
+    const side=middayOrb.closeState==="UP BREAK"?"BUY":"SELL";
+    const long=side==="BUY",level=long?+middayOrb.high:+middayOrb.low;
+    const d=+closed5.delta||0;
+    const deltaAligned=long?d>0:d<0;
+    const vwapAligned=Number.isFinite(activeVwap)?(long?currentPrice>activeVwap:currentPrice<activeVwap):false;
+    const biasAligned=long?(bias==="BULLISH"||bias==="MIXED"):(bias==="BEARISH"||bias==="MIXED");
+    const tgt=targetFor(side,level+(long?.01:-.01));
+    let quality=40+(deltaAligned?15:0)+(vwapAligned?10:0)+(biasAligned?10:0)+(tgt?10:0);
+    if(signal?.side===side&&signal.score>=65) quality+=5;
+    quality=Math.min(100,quality);
+    const hist=middayOrb.stats?.close||{};
+    setups.push({
+      side,
+      title:"11-12 PT ORB "+(long?"high":"low")+" confirmed",
+      trigger:"5m close "+(long?"above ":"below ")+(long?"11-12 ORB High ":"11-12 ORB Low ")+level.toFixed(2)+" with aligned delta; prefer acceptance/retest rather than first touch.",
+      invalidation:"5m close back inside the 11-12 PT range.",
+      target:tgt?(tgt.label+" "+(+tgt.price).toFixed(2)):"next major liquidity level",
+      quality,
+      context:"Edgeful 12mo close-confirmed context: one-side break "+Number(hist.oneSidePct||0).toFixed(1)+"%, double break "+Number(hist.doublePct||0).toFixed(1)+"% · n="+(middayOrb.stats?.sampleSize||"—")+" · as of "+(middayOrb.stats?.asOf||"—")
+    });
   }
 
   const nearGap=(gaps||[]).filter(g=>g.near&&!g.filled)[0]||null;
@@ -1658,11 +1724,12 @@ function buildIndicatorPayload() {
     bars15m,levels,flow15m,currentPrice,rthVwap,globexVwap,15
   );
   const orb=currentOrb(bars5m,f5);
+  const middayOrb=currentMiddayOrb(bars5m);
   const gaps=detectOpeningGaps(bars5m,currentPrice,current5mAtr(bars5m,20));
   const rawAnalysis=buildMarketAnalysis({
     currentPrice,levels,f1,f5,signal:trapSignal,traps,orderBlocks,globexVwap,rthVwap,
     sessionCvd:relayFresh?relayState.currentGlobexCvd:(globexExact?.cvd??null),
-    atr5:current5mAtr(bars5m,20),orb,bars5m,
+    atr5:current5mAtr(bars5m,20),orb,middayOrb,bars5m,
     delta15:deltaTrend15m(f5),
     profiles:{session:globexExact,rth:rthExact},
     icebergs:relayFresh?(relayState.icebergs||[]):[],
@@ -1683,7 +1750,7 @@ function buildIndicatorPayload() {
   maybeSendSignalAlert(signal,currentPrice);
 
   return {
-    schemaVersion:"1.7",
+    schemaVersion:"1.8",
     marketSymbol:MARKET_SYMBOL,
     cutoff0530Pacific:(morningCutoff?.cutoffPacificDate===nowPT().toISODate())?{
       cutoffPacificDate:morningCutoff.cutoffPacificDate,
@@ -1721,6 +1788,7 @@ function buildIndicatorPayload() {
     restingLiquidity:relayFresh?(relayState.restingLiquidity||{levels:[],events:[],threshold:null}):{levels:[],events:[],threshold:null},
     gaps,
     orb,
+    middayOrb,
     signal,
     analysis,
     marketStructure,
