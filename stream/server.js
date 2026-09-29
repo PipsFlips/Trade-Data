@@ -607,6 +607,29 @@ function currentOrb(five,f5){
 
 const EDGEFUL_12M=require("./edgeful-baselines.json");
 
+function edgeGapBucketKey(pct){
+  if(!Number.isFinite(+pct)||+pct<0) return null;
+  const p=+pct;
+  if(p<0.2) return "0-0.19";
+  if(p<0.4) return "0.2-0.39";
+  if(p<0.7) return "0.4-0.69";
+  if(p<1.0) return "0.7-0.99";
+  if(p<1.5) return "1.0-1.49";
+  return ">=1.5";
+}
+function edgeInsideBucketKey(pct){
+  if(!Number.isFinite(+pct)||+pct<0) return null;
+  const p=+pct;
+  if(p<1.0) return "0-0.99";
+  if(p<2.0) return "1-1.99";
+  return null;
+}
+function edgeIbBucketKey(pct){
+  if(!Number.isFinite(+pct)||+pct<0) return null;
+  const p=+pct;
+  return p>=0.6&&p<0.9 ? "0.6-0.89" : null;
+}
+
 // Historical context for the chart and analysis. It never substitutes collector prices or live order flow.
 function buildEdgefulChartContext(bars5m){
   const now=nowPT().setZone("America/New_York");
@@ -687,8 +710,17 @@ function buildEdgefulChartContext(bars5m){
     "Break state uses completed 5-minute closes. Edgeful continuation: "+(continuationDetail(orb15Continuation)||"unavailable")+". Historical frequencies describe the full observation window.");
   const ib60Continuation=e.ib60.continuation||{};
   const ib60ContinuationSummary=continuationSummary(ib60Continuation);
-  rangeCondition("ib60","60m IB",open,at(10,30),"Single break "+pct(e.ib60.single)+" · both "+pct(e.ib60.double)+" · neither "+pct(e.ib60.neither)+(ib60ContinuationSummary?" · "+ib60ContinuationSummary:""),40,
-    "Break state uses completed 5-minute closes. Edgeful continuation: "+(continuationDetail(ib60Continuation)||"unavailable")+". Historical frequencies describe the full observation window.");
+  let ib60Stat="Single break "+pct(e.ib60.single)+" · both "+pct(e.ib60.double)+" · neither "+pct(e.ib60.neither)+(ib60ContinuationSummary?" · "+ib60ContinuationSummary:"");
+  if(now>=at(10,30)&&complete(open,at(10,30))){
+    const ibRange=range(window(open,at(10,30)));
+    if(ibRange&&Number.isFinite(+ibRange.open)&&+ibRange.open!==0){
+      const ibPct=100*(ibRange.high-ibRange.low)/Math.abs(ibRange.open);
+      const ibKey=edgeIbBucketKey(ibPct),ibBucket=ibKey?e.ib60BySize?.buckets?.[ibKey]:null;
+      if(ibBucket) ib60Stat+=" · size "+ibPct.toFixed(2)+"% → single "+pct(ibBucket.singleBreak)+" · n="+ibBucket.sample;
+    }
+  }
+  rangeCondition("ib60","60m IB",open,at(10,30),ib60Stat,40,
+    "Break state uses completed 5-minute closes. Edgeful continuation: "+(continuationDetail(ib60Continuation)||"unavailable")+". Size-conditioned single-break statistics are a separate historical qualifier, not a directional forecast.");
   if(z15){
     const green=z15.close>z15.open,doji=z15.close===z15.open;
     const openSample=green?e.opening15.greenOpenSample:e.opening15.redOpenSample;
@@ -701,23 +733,49 @@ function buildEdgefulChartContext(bars5m){
     if(complete(s,t)){prior=range(window(s,t));priorDay=d;}
     else if(window(s,t).length) break; // Never silently skip a partial prior session.
   }
+  const priorColor=prior&&prior.close!==prior.open?(prior.close>prior.open?"green":"red"):null;
+  const priorColorStats=priorColor?e.prevDayColor?.[priorColor]:null;
   for(const [key,label,side,follow] of [["pdh","Prior high","high",e.prevDay.highFollowGreen],["pdl","Prior low","low",e.prevDay.lowFollowRed]]){
     const broken=prior&&r&&(side==="high"?r.high>prior.high:r.low<prior.low);
     const price=prior?.[side],anchor=prior?.[side+"Time"];
+    const conditioned=side==="high"?priorColorStats?.highFollowGreen:priorColorStats?.lowFollowRed;
+    const conditionedRate=conditioned?.rate,conditionedN=conditioned?.sample;
+    const followStat=Number.isFinite(+conditionedRate)
+      ? "Prior "+priorColor+" day → "+(side==="high"?"PDH break + green close ":"PDL break + red close ")+pct(conditionedRate)+" · n="+conditionedN
+      : "Of "+(side==="high"?"PDH":"PDL")+"-break sessions, RTH closes "+(side==="high"?"green ":"red ")+pct(follow);
     add(key,label,!prior?"Prior RTH coverage incomplete":broken?"Broken during RTH":now<open?"Waiting for RTH":"Not broken during RTH",
-      broken?"Of "+(side==="high"?"PDH":"PDL")+"-break sessions, RTH closes "+(side==="high"?"green ":"red ")+pct(follow):"Historical follow-through activates after the level breaks",
+      broken?followStat:"Historical follow-through activates after the level breaks",
       prior?{high:price,low:price,highTime:anchor,lowTime:anchor,start:anchor,end:open.toISO(),monitorEnd:close.toISO()}:null,broken?60:5,
-      {detail:"Prior RTH: "+(priorDay?.toISODate()||"unavailable")+". Conditional sample count unavailable; candle color is not a trade win rate."});
+      {detail:"Prior RTH: "+(priorDay?.toISODate()||"unavailable")+(priorColor?" · prior candle "+priorColor:"")+". Candle-color follow-through is historical context, not a trade win rate."});
   }
   const first=rth.find(b=>Date.parse(b.t)===open.toMillis());
   if(prior&&first){
+    const priorRangePct=prior.close?100*(prior.high-prior.low)/Math.abs(prior.close):null;
+    const insideOpen=+first.o>=prior.low&&+first.o<=prior.high;
+    const insideKey=edgeInsideBucketKey(priorRangePct),insideStat=insideKey?e.insideDayBreakout?.buckets?.[insideKey]:null;
+    if(insideOpen&&insideStat){
+      add("inside","Inside-day breakout","RTH opened inside prior range · prior range "+priorRangePct.toFixed(2)+"%",
+        "Break prior-day H/L "+pct(insideStat.breakout)+" · n="+insideStat.sample,
+        {high:prior.high,low:prior.low,highTime:open.toISO(),lowTime:open.toISO(),start:open.toISO(),end:close.toISO(),monitorEnd:close.toISO()},55,
+        {detail:"Historical condition only: opening inside the prior RTH range with prior-day range bucket "+insideKey+"%. It does not predict which side breaks first."});
+    }else{
+      add("inside","Inside-day breakout",insideOpen?"Prior range bucket not qualified":"RTH did not open inside prior range","No active size-conditioned inside-day statistic");
+    }
+
     const up=+first.o>prior.close,equal=+first.o===prior.close;
     const filled=up?r.low<=prior.close:r.high>=prior.close;
+    const gapPct=prior.close?100*Math.abs(+first.o-prior.close)/Math.abs(prior.close):null;
+    const gapKey=edgeGapBucketKey(gapPct),gapSide=up?"up":"down",gapBucket=gapKey?e.gapFillBySize?.buckets?.[gapKey]?.[gapSide]:null;
+    const gapRate=Number.isFinite(+gapBucket?.fill)?+gapBucket.fill:(up?e.gapFill.up:e.gapFill.down);
+    const gapN=Number.isFinite(+gapBucket?.sample)?gapBucket.sample:null;
     add("gap","RTH gap",equal?"No opening gap":filled?"Filled during RTH":up?"Gap up · unfilled":"Gap down · unfilled",
-      equal?"No gap condition":"Full-fill frequency "+pct(up?e.gapFill.up:e.gapFill.down),
+      equal?"No gap condition":"Full-fill frequency "+pct(gapRate)+(gapKey?" · "+gapKey+"% bucket":"")+(gapN?" · n="+gapN:""),
       equal?null:{high:Math.max(+first.o,prior.close),low:Math.min(+first.o,prior.close),highTime:open.toISO(),lowTime:open.toISO(),start:open.toISO(),end:close.toISO(),monitorEnd:close.toISO()},filled?15:50,
-      {detail:"Today's RTH gap only. Prior close "+prior.close.toFixed(2)+"; conditional sample count unavailable."});
-  }else add("gap","RTH gap","Waiting for RTH open / prior-close coverage","Historical condition unavailable");
+      {detail:"Today's RTH gap only. Prior close "+prior.close.toFixed(2)+(Number.isFinite(+gapPct)?"; gap "+gapPct.toFixed(2)+"%":"")+". Size-conditioned fill rates may support or conflict with a gap-fill setup."});
+  }else{
+    add("inside","Inside-day breakout","Waiting for RTH open / prior-range coverage","Historical condition unavailable");
+    add("gap","RTH gap","Waiting for RTH open / prior-close coverage","Historical condition unavailable");
+  }
   if(r){
     const points=r.high-r.low,adr=e.adr14.value;
     add("range","Range / ADR",points.toFixed(2)+" pts · "+(adr>0?(100*points/adr).toFixed(0)+"% of saved ADR":"ADR unavailable"),
