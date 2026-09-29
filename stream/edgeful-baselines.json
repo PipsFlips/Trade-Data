@@ -9,12 +9,44 @@
       "anyBreak": 89.5,
       "oneSide": 73.9,
       "double": 15.6,
-      "noBreak": 10.5
+      "noBreak": 10.5,
+      "continuation": {
+        "greenToGreen": 54.0,
+        "redToRed": 48.0,
+        "greenSample": 166,
+        "redSample": 92,
+        "sample": 258
+      }
     },
     "ib60": {
       "single": 81.7,
       "double": 9.7,
-      "neither": 8.6
+      "neither": 8.6,
+      "continuation": {
+        "performance": {
+          "sample": 257,
+          "avgUpExtensionPct": 0.28,
+          "avgDownExtensionPct": -0.47,
+          "maxUpExtensionPct": 2.17,
+          "maxDownExtensionPct": -4.17
+        },
+        "retracement": {
+          "breakoutSample": 121,
+          "breakdownSample": 89,
+          "breakoutHalf": 29.75,
+          "breakoutOne": 1.65,
+          "breakoutOneHalf": 0.0,
+          "breakdownHalf": 34.83,
+          "breakdownOne": 1.12,
+          "breakdownOneHalf": 0.0
+        },
+        "formationFollowThrough": {
+          "highFirstToHighBreak": 30.47,
+          "highFirstToLowBreak": 55.47,
+          "lowFirstToHighBreak": 73.64,
+          "lowFirstToLowBreak": 23.26
+        }
+      }
     },
     "prevDay": {
       "highBreak": 58,
@@ -28,12 +60,35 @@
     },
     "opening15": {
       "greenToGreen": 65.2,
-      "redToRed": 55.5
+      "redToRed": 55.5,
+      "sample": 257,
+      "greenOpenSample": 138,
+      "redOpenSample": 119
     },
     "orb15": {
       "oneSide": 63.8,
       "double": 35.8,
-      "noBreak": 0.4
+      "noBreak": 0.4,
+      "continuation": {
+        "performance": {
+          "breakoutSample": 137,
+          "breakdownSample": 119,
+          "avgBreakoutExtensionPct": 0.4,
+          "avgBreakdownExtensionPct": -0.47,
+          "maxBreakoutExtensionPct": 1.88,
+          "minBreakdownExtensionPct": -3.59
+        },
+        "retracement": {
+          "breakoutSample": 90,
+          "breakdownSample": 74,
+          "breakoutHalf": 37.78,
+          "breakoutOne": 10.0,
+          "breakoutOneHalf": 1.11,
+          "breakdownHalf": 41.89,
+          "breakdownOne": 4.05,
+          "breakdownOneHalf": 0.0
+        }
+      }
     },
     "atr14": {
       "respected": 69.6,
@@ -55,6 +110,28 @@
         "oneSidePct": 73,
         "doublePct": 4,
         "noBreakPct": 23
+      },
+      "continuation": {
+        "performance": {
+          "sampleDays": 191,
+          "breakoutSample": 100,
+          "breakdownSample": 91,
+          "avgBreakoutExtensionPct": 0.19,
+          "avgBreakdownExtensionPct": -0.23,
+          "maxBreakoutExtensionPct": 1.42,
+          "minBreakdownExtensionPct": -1.41
+        },
+        "retracement": {
+          "sampleDays": 248,
+          "breakoutSample": 93,
+          "breakdownSample": 88,
+          "breakoutHalf": 23.66,
+          "breakoutOne": 5.38,
+          "breakoutOneHalf": 0.0,
+          "breakdownHalf": 19.32,
+          "breakdownOne": 2.27,
+          "breakdownOneHalf": 0.0
+        }
       }
     },
     "londonNy": {
@@ -68,12 +145,44 @@
       "anyBreak": 93,
       "oneSide": 73.9,
       "double": 19.1,
-      "noBreak": 7
+      "noBreak": 7,
+      "continuation": {
+        "greenToGreen": 56.0,
+        "redToRed": 51.0,
+        "greenSample": 156,
+        "redSample": 102,
+        "sample": 258
+      }
     },
     "ib60": {
       "single": 79.8,
       "double": 15.2,
-      "neither": 5.1
+      "neither": 5.1,
+      "continuation": {
+        "performance": {
+          "sample": 257,
+          "avgUpExtensionPct": 0.23,
+          "avgDownExtensionPct": -0.32,
+          "maxUpExtensionPct": 1.32,
+          "maxDownExtensionPct": -3.07
+        },
+        "retracement": {
+          "breakoutSample": 111,
+          "breakdownSample": 94,
+          "breakoutHalf": 26.13,
+          "breakoutOne": 1.8,
+          "breakoutOneHalf": 0.0,
+          "breakdownHalf": 41.49,
+          "breakdownOne": 2.13,
+          "breakdownOneHalf": 1.06
+        },
+        "formationFollowThrough": {
+          "highFirstToHighBreak": 31.4,
+          "highFirstToLowBreak": 61.98,
+          "lowFirstToHighBreak": 69.12,
+          "lowFirstToLowBreak": 27.21
+        }
+      }
     },
     "prevDay": {
       "highBreak": 56,
@@ -87,12 +196,35 @@
     },
     "opening15": {
       "greenToGreen": 61.3,
-      "redToRed": 55.8
+      "redToRed": 55.8,
+      "sample": 257,
+      "greenOpenSample": 137,
+      "redOpenSample": 120
     },
     "orb15": {
       "oneSide": 59.1,
       "double": 40.5,
-      "noBreak": 0.4
+      "noBreak": 0.4,
+      "continuation": {
+        "performance": {
+          "breakoutSample": 133,
+          "breakdownSample": 123,
+          "avgBreakoutExtensionPct": 0.29,
+          "avgBreakdownExtensionPct": -0.36,
+          "maxBreakoutExtensionPct": 1.62,
+          "minBreakdownExtensionPct": -2.85
+        },
+        "retracement": {
+          "breakoutSample": 82,
+          "breakdownSample": 70,
+          "breakoutHalf": 41.46,
+          "breakoutOne": 12.2,
+          "breakoutOneHalf": 0.0,
+          "breakdownHalf": 38.57,
+          "breakdownOne": 5.71,
+          "breakdownOneHalf": 2.86
+        }
+      }
     },
     "atr14": {
       "respected": 68.1,
@@ -114,6 +246,28 @@
         "oneSidePct": 67.7,
         "doublePct": 6.5,
         "noBreakPct": 25.8
+      },
+      "continuation": {
+        "performance": {
+          "sampleDays": 184,
+          "breakoutSample": 90,
+          "breakdownSample": 94,
+          "avgBreakoutExtensionPct": 0.14,
+          "avgBreakdownExtensionPct": -0.17,
+          "maxBreakoutExtensionPct": 1.3,
+          "minBreakdownExtensionPct": -0.93
+        },
+        "retracement": {
+          "sampleDays": 248,
+          "breakoutSample": 80,
+          "breakdownSample": 88,
+          "breakoutHalf": 21.25,
+          "breakoutOne": 1.25,
+          "breakoutOneHalf": 0.0,
+          "breakdownHalf": 18.18,
+          "breakdownOne": 1.14,
+          "breakdownOneHalf": 0.0
+        }
       }
     },
     "londonNy": {

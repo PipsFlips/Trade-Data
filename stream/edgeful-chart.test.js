@@ -49,3 +49,12 @@ test('midday monitoring ignores after-close bars and keeps explicit sample',()=>
   assert.match(get(e,'midday').detail,/248 sessions/);
   assert.match(get(e,'midday').stat,/73.0%/);
 });
+test('Edgeful chart content includes continuation extension and retracement statistics',()=>{
+  const b=rows('2026-09-29T09:30','2026-09-29T16:05');
+  const e=build('2026-09-29T16:10',b);
+  assert.match(get(e,'overnight').stat,/continuation green→green 54.0% · red→red 48.0%/);
+  assert.match(get(e,'orb15').stat,/avg extension up \+0.40% \/ down -0.47%/);
+  assert.match(get(e,'orb15').stat,/0.5x retrace up 37.8% \/ down 41.9%/);
+  assert.match(get(e,'ib60').detail,/maximum observed extension up \+2.17% \/ down -4.17%/);
+  assert.match(get(e,'midday').detail,/0.5x retracement up 23.7% \/ down 19.3%/);
+});

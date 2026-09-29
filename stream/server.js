@@ -628,7 +628,37 @@ function buildEdgefulChartContext(bars5m){
     return {...z,highTime:bs.find(b=>+b.h===z.high).t,lowTime:bs.find(b=>+b.l===z.low).t};
   };
   const rth=window(open,stop),r=range(rth),items=[];
-  const pct=v=>Number.isFinite(v)?v.toFixed(1)+"%":"unavailable";
+  const pct=v=>Number.isFinite(+v)?(+v).toFixed(1)+"%":"unavailable";
+  const signedPct=v=>Number.isFinite(+v)?((+v>=0?"+":"")+(+v).toFixed(2)+"%"):"unavailable";
+  const continuationSummary=c=>{
+    const p=c?.performance||{},r=c?.retracement||{};
+    const up=p.avgUpExtensionPct??p.avgBreakoutExtensionPct;
+    const down=p.avgDownExtensionPct??p.avgBreakdownExtensionPct;
+    const upHalf=r.breakoutHalf,downHalf=r.breakdownHalf;
+    const out=[];
+    if(Number.isFinite(+up)||Number.isFinite(+down)) out.push("avg extension up "+signedPct(up)+" / down "+signedPct(down));
+    if(Number.isFinite(+upHalf)||Number.isFinite(+downHalf)) out.push("0.5x retrace up "+pct(upHalf)+" / down "+pct(downHalf));
+    return out.join(" · ");
+  };
+  const continuationDetail=c=>{
+    const p=c?.performance||{},r=c?.retracement||{};
+    const out=[];
+    const up=p.avgUpExtensionPct??p.avgBreakoutExtensionPct;
+    const down=p.avgDownExtensionPct??p.avgBreakdownExtensionPct;
+    const maxUp=p.maxUpExtensionPct??p.maxBreakoutExtensionPct;
+    const maxDown=p.maxDownExtensionPct??p.minBreakdownExtensionPct;
+    if(Number.isFinite(+up)||Number.isFinite(+down)) out.push("average first-break extension up "+signedPct(up)+" / down "+signedPct(down));
+    if(Number.isFinite(+maxUp)||Number.isFinite(+maxDown)) out.push("maximum observed extension up "+signedPct(maxUp)+" / down "+signedPct(maxDown));
+    if(Number.isFinite(+r.breakoutHalf)||Number.isFinite(+r.breakdownHalf)) out.push("0.5x retracement up "+pct(r.breakoutHalf)+" / down "+pct(r.breakdownHalf));
+    if(Number.isFinite(+r.breakoutOne)||Number.isFinite(+r.breakdownOne)) out.push("1x retracement up "+pct(r.breakoutOne)+" / down "+pct(r.breakdownOne));
+    const samples=[];
+    const upN=p.breakoutSample??r.breakoutSample;
+    const downN=p.breakdownSample??r.breakdownSample;
+    if(Number.isFinite(+upN)) samples.push("up n="+upN);
+    if(Number.isFinite(+downN)) samples.push("down n="+downN);
+    if(samples.length) out.push("samples "+samples.join(" / "));
+    return out.join("; ");
+  };
   const add=(key,label,state,stat,geometry=null,priority=0,extra={})=>items.push({key,label,state,stat,geometry,priority,...extra});
   const geometry=(z,s,t)=>z?{high:z.high,low:z.low,highTime:z.highTime,lowTime:z.lowTime,start:s.toISO(),end:t.toISO(),monitorEnd:close.toISO()}:null;
   const breakState=(bs,z,method="close")=>{
@@ -637,22 +667,32 @@ function buildEdgefulChartContext(bars5m){
   };
   const globex=day.minus({days:1}).set({hour:18}),on=range(window(globex,now<open?now:open));
   const onComplete=complete(globex,open);
+  const overnightContinuation=e.overnight.continuation||{};
+  const overnightStat="Any-side break "+pct(e.overnight.anyBreak)+" · one side "+pct(e.overnight.oneSide)+" · both "+pct(e.overnight.double)+" · neither "+pct(e.overnight.noBreak)+
+    (Number.isFinite(+overnightContinuation.greenToGreen)||Number.isFinite(+overnightContinuation.redToRed)?" · continuation green→green "+pct(overnightContinuation.greenToGreen)+" · red→red "+pct(overnightContinuation.redToRed):"");
   add("overnight","Overnight",now<open?"Building · completed bars":onComplete?breakState(rth,on,"wick"):"Collector coverage incomplete",
-    "Any-side break "+pct(e.overnight.anyBreak)+" · one side "+pct(e.overnight.oneSide)+" · both "+pct(e.overnight.double)+" · neither "+pct(e.overnight.noBreak),
+    overnightStat,
     now<open?geometry(on,globex,now):onComplete?geometry(on,globex,open):null,10,
-    {detail:"Full-session historical outcomes; building overnight levels can change."});
-  const rangeCondition=(key,label,s,t,hist,priority)=>{
+    {detail:"Full-session historical outcomes; continuation is the next RTH close color after the overnight direction (samples: "+(overnightContinuation.sample||"unavailable")+"). Building overnight levels can change."});
+  const rangeCondition=(key,label,s,t,hist,priority,detail)=>{
     if(now<t){add(key,label,"Forms by "+t.toFormat("HH:mm")+" ET","Waiting for completed collector bars");return null;}
     if(!complete(s,t)){add(key,label,"Collector coverage incomplete","Historical condition unavailable");return null;}
     const z=range(window(s,t)),after=window(t,stop);
-    add(key,label,breakState(after,z),hist,geometry(z,s,t),priority,{detail:"Break state uses completed 5-minute closes. Historical frequencies describe the full observation window."});
+    add(key,label,breakState(after,z),hist,geometry(z,s,t),priority,{detail:detail||"Break state uses completed 5-minute closes. Historical frequencies describe the full observation window."});
     return z;
   };
-  const z15=rangeCondition("orb15","15m ORB",open,at(9,45),"5m-close: one side "+pct(e.orb15.oneSide)+" · both "+pct(e.orb15.double)+" · neither "+pct(e.orb15.noBreak),30);
-  rangeCondition("ib60","60m IB",open,at(10,30),"Single break "+pct(e.ib60.single)+" · both "+pct(e.ib60.double)+" · neither "+pct(e.ib60.neither),40);
+  const orb15Continuation=e.orb15.continuation||{};
+  const orb15ContinuationSummary=continuationSummary(orb15Continuation);
+  const z15=rangeCondition("orb15","15m ORB",open,at(9,45),"5m-close: one side "+pct(e.orb15.oneSide)+" · both "+pct(e.orb15.double)+" · neither "+pct(e.orb15.noBreak)+(orb15ContinuationSummary?" · "+orb15ContinuationSummary:""),30,
+    "Break state uses completed 5-minute closes. Edgeful continuation: "+(continuationDetail(orb15Continuation)||"unavailable")+". Historical frequencies describe the full observation window.");
+  const ib60Continuation=e.ib60.continuation||{};
+  const ib60ContinuationSummary=continuationSummary(ib60Continuation);
+  rangeCondition("ib60","60m IB",open,at(10,30),"Single break "+pct(e.ib60.single)+" · both "+pct(e.ib60.double)+" · neither "+pct(e.ib60.neither)+(ib60ContinuationSummary?" · "+ib60ContinuationSummary:""),40,
+    "Break state uses completed 5-minute closes. Edgeful continuation: "+(continuationDetail(ib60Continuation)||"unavailable")+". Historical frequencies describe the full observation window.");
   if(z15){
     const green=z15.close>z15.open,doji=z15.close===z15.open;
-    add("opening15","Opening candle",doji?"Doji · no directional condition":green?"Green opening 15m":"Red opening 15m",doji?"No doji baseline provided":"Same-color RTH close "+pct(green?e.opening15.greenToGreen:e.opening15.redToRed),geometry(z15,open,at(9,45)),20,{detail:"RTH candle color; this is not the return from an entry at the opening-range break. Conditional sample count unavailable."});
+    const openSample=green?e.opening15.greenOpenSample:e.opening15.redOpenSample;
+    add("opening15","Opening candle",doji?"Doji · no directional condition":green?"Green opening 15m":"Red opening 15m",doji?"No doji baseline provided":"Same-color RTH close "+pct(green?e.opening15.greenToGreen:e.opening15.redToRed)+(Number.isFinite(+openSample)?" · n="+openSample:""),geometry(z15,open,at(9,45)),20,{detail:"RTH candle color continuation through the RTH close; this is not the return from an entry at the opening-range break. Conditional sample count: "+(openSample||"unavailable")+"."});
   }else add("opening15","Opening candle","Waiting for complete 09:30–09:45 ET range","Historical condition unavailable");
   // Find a complete preceding RTH session, including Friday before Monday.
   let prior=null,priorDay=null;
@@ -684,10 +724,12 @@ function buildEdgefulChartContext(bars5m){
       "ADR respected "+pct(e.adr14.respected)+" · ATR respected "+pct(e.atr14.respected),geometry(r,open,stop),25,
       {detail:"Saved 14-day ADR reference: "+adr+" points, as of "+e.asOf+". ATR history is separate; no current ATR14 projection or price target is inferred."});
   }else add("range","Range / ADR","Waiting for RTH","No current RTH range");
-  const mid=e.middayOrb?.close||{};
-  rangeCondition("midday","14–15 ET ORB",at(14),at(15),"5m-close: one side "+pct(mid.oneSidePct)+" · both "+pct(mid.doublePct)+" · neither "+pct(mid.noBreakPct),70);
+  const mid=e.middayOrb?.close||{},middayContinuation=e.middayOrb?.continuation||{};
+  const middayContinuationSummary=continuationSummary(middayContinuation);
+  rangeCondition("midday","14–15 ET ORB",at(14),at(15),"5m-close: one side "+pct(mid.oneSidePct)+" · both "+pct(mid.doublePct)+" · neither "+pct(mid.noBreakPct)+(middayContinuationSummary?" · "+middayContinuationSummary:""),70,
+    "Break state uses completed 5-minute closes. Edgeful continuation: "+(continuationDetail(middayContinuation)||"unavailable")+". Historical frequencies describe the 11:00–12:00 PT range and the final monitored hour.");
   const midday=items.find(x=>x.key==="midday");
-  midday.detail="Range 14:00–15:00 ET (11 AM–noon PT); observe 15:00–16:00 ET. Report sample: "+(e.middayOrb?.sample||"unavailable")+" sessions.";
+  if(midday) midday.detail="Range 14:00–15:00 ET (11 AM–noon PT); observe 15:00–16:00 ET. Break sample: "+(e.middayOrb?.sample||"unavailable")+" sessions. "+(continuationDetail(middayContinuation)||"Continuation sample unavailable")+".";
   const lastCompleted=rows.at(-1)?.t||null;
   const collectorStale=!lastCompleted||now.toMillis()-Date.parse(lastCompleted)>600000;
   const expectedStop=stop.set({minute:Math.floor(stop.minute/5)*5,second:0,millisecond:0});
@@ -695,7 +737,7 @@ function buildEdgefulChartContext(bars5m){
   const stale=now.diff(DateTime.fromISO(e.asOf,{zone:"America/New_York"}),"days").days>10;
   return {version:1,lastCompleted,collectorStale,rthCoverage,sessionDate:day.toISODate(),phase:now<open?"PRE-RTH":now>=close?"RTH COMPLETE":"RTH",items,
     source:"Edgeful",ticker:root,asOf:e.asOf,lookback:EDGEFUL_12M.lookback,baselineSessions:e.sample,stale,
-    note:"Historical frequencies, not trade win rates. Collector prices; completed 5m bars. Separate from live /10 score."};
+    note:"Historical frequencies and continuation outcomes, not trade win rates. Collector prices; completed 5m bars. Separate from live /10 score."};
 }
 
 function buildEdgefulContext({bars5m}){
@@ -706,7 +748,7 @@ function buildEdgefulContext({bars5m}){
     asOf:chart.asOf,refreshedOn:EDGEFUL_12M.refreshedOn||null,
     items:chart.items.map(x=>({key:x.key,label:x.label,text:x.state+" · "+x.stat,applicable:Boolean(x.geometry)})),
     excluded:[{key:"londonNy",reason:e.londonNy?.note||"Excluded"}],
-    note:"Historical conditional frequencies only; not current-trade probabilities and never included in the 0–10 live score."
+    note:"Historical conditional frequencies and continuation outcomes only; not current-trade probabilities and never included in the 0–10 live score."
   };
 }
 
@@ -726,7 +768,8 @@ function currentMiddayOrb(five){
     refreshedOn:EDGEFUL_12M.refreshedOn||null,
     sampleSize:mid.sample||null,
     wick:mid.wick||{},
-    close:mid.close||{}
+    close:mid.close||{},
+    continuation:mid.continuation||{}
   };
   if(now<end) return {formed:false,start:start.toISO(),end:end.toISO(),monitorEnd:close.toISO(),high:null,low:null,stats};
   const rows=between(five||[],start,end);
@@ -883,6 +926,21 @@ function buildMarketAnalysis({currentPrice,levels,f1,f5,signal,traps,orderBlocks
   const above=major.filter(l=>+l.price>currentPrice).sort((a,b)=>+a.price-+b.price);
   const below=major.filter(l=>+l.price<currentPrice).sort((a,b)=>+b.price-+a.price);
   const setups=[];
+  const edgeRoot=MARKET_SYMBOL==="MES"?"ES":"NQ";
+  const edgeHistory=EDGEFUL_12M[edgeRoot]||{};
+  const edgeSignedPct=v=>Number.isFinite(+v)?((+v>=0?"+":"")+(+v).toFixed(2)+"%"):"unavailable";
+  const edgeContinuationContext=(entry,side)=>{
+    const c=entry?.continuation||{},p=c.performance||{},r=c.retracement||{};
+    const long=side==="BUY";
+    const avg=long?(p.avgUpExtensionPct??p.avgBreakoutExtensionPct):(p.avgDownExtensionPct??p.avgBreakdownExtensionPct);
+    const half=long?r.breakoutHalf:r.breakdownHalf;
+    const sample=long?(p.breakoutSample??r.breakoutSample):(p.breakdownSample??r.breakdownSample);
+    const out=[];
+    if(Number.isFinite(+avg)) out.push("avg first-break extension "+edgeSignedPct(avg));
+    if(Number.isFinite(+half)) out.push("0.5x retrace "+(+half).toFixed(1)+"%");
+    if(Number.isFinite(+sample)) out.push("n="+sample);
+    return out.join(" · ");
+  };
 
   const targetFor=(side,from)=>{
     const xs=major.filter(l=>side==="BUY"?+l.price>from:+l.price<from)
@@ -974,6 +1032,7 @@ function buildMarketAnalysis({currentPrice,levels,f1,f5,signal,traps,orderBlocks
       if(tgt) quality+=10;
       if(signal?.side===side&&signal.score>=65) quality+=5;
       quality=Math.min(100,quality);
+      const edgeContinuation=edgeContinuationContext(edgeHistory.orb15,side);
       setups.push({
         side,
         title:"ORB "+(long?"high":"low")+" breakout",
@@ -983,7 +1042,7 @@ function buildMarketAnalysis({currentPrice,levels,f1,f5,signal,traps,orderBlocks
         invalidation:"5m close back "+(long?"below ORB High.":"above ORB Low."),
         target:tgt?(tgt.label+" "+(+tgt.price).toFixed(2)):"next major liquidity level",
         quality,
-        context:"Bias "+bias+" · volume "+(Number.isFinite(volRatio)?volRatio.toFixed(2)+"×":"n/a")+" · delta "+(d>0?"+":"")+Math.round(d)
+        context:"Bias "+bias+" · volume "+(Number.isFinite(volRatio)?volRatio.toFixed(2)+"×":"n/a")+" · delta "+(d>0?"+":"")+Math.round(d)+(edgeContinuation?" · Edgeful 12mo "+edgeContinuation:"")
       });
     };
     if(nearHi && (longBias || currentPrice>=+orb.high)) orbSetup("BUY");
@@ -1004,6 +1063,7 @@ function buildMarketAnalysis({currentPrice,levels,f1,f5,signal,traps,orderBlocks
     if(signal?.side===side&&signal.score>=65) quality+=5;
     quality=Math.min(100,quality);
     const hist=middayOrb.stats?.close||{};
+    const edgeContinuation=edgeContinuationContext(edgeHistory.middayOrb,side);
     setups.push({
       side,
       title:"11-12 PT ORB "+(long?"high":"low")+" confirmed",
@@ -1011,7 +1071,7 @@ function buildMarketAnalysis({currentPrice,levels,f1,f5,signal,traps,orderBlocks
       invalidation:"5m close back inside the 11-12 PT range.",
       target:tgt?(tgt.label+" "+(+tgt.price).toFixed(2)):"next major liquidity level",
       quality,
-      context:"Edgeful 12mo close-confirmed context: one-side break "+Number(hist.oneSidePct||0).toFixed(1)+"%, double break "+Number(hist.doublePct||0).toFixed(1)+"% · n="+(middayOrb.stats?.sampleSize||"—")+" · as of "+(middayOrb.stats?.asOf||"—")
+      context:"Edgeful 12mo close-confirmed context: one-side break "+Number(hist.oneSidePct||0).toFixed(1)+"%, double break "+Number(hist.doublePct||0).toFixed(1)+"% · "+(edgeContinuation||"continuation unavailable")+" · n="+(middayOrb.stats?.sampleSize||"—")+" · as of "+(middayOrb.stats?.asOf||"—")
     });
   }
 

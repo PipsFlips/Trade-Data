@@ -306,13 +306,13 @@ canvas{display:block;width:100%;height:410px;border-radius:8px;background:#0d131
       <details>
         <summary>Edgeful historical context</summary>
         <div class="legendBody">
-          Edgeful is used as a <b>historical-condition layer</b>, not as live order flow and not as a replacement for the collector. The panel can surface overnight-range behavior, 15-minute ORB behavior, 60-minute Initial Balance behavior, prior-day high/low follow-through, RTH gap-fill frequency, opening-candle continuation, and ATR/ADR context when the corresponding live condition exists. Historical percentages remain separate from the system's 0–10 live evidence score. London-to-New-York direction correlation is currently excluded because the trailing sample was approximately 50/50 and did not show a useful directional edge.
+          Edgeful is used as a <b>historical-condition layer</b>, not as live order flow and not as a replacement for the collector. The panel can surface overnight-range behavior, 15-minute ORB behavior, 60-minute Initial Balance behavior, prior-day high/low follow-through, RTH gap-fill frequency, opening-candle continuation, first-break extension and retracement behavior, and ATR/ADR context when the corresponding live condition exists. Historical percentages remain separate from the system's 0–10 live evidence score. London-to-New-York direction correlation is currently excluded because the trailing sample was approximately 50/50 and did not show a useful directional edge.
         </div>
       </details>
       <details>
         <summary>11:00–12:00 PT Midday ORB</summary>
         <div class="legendBody">
-          The system builds a separate range from <b>11:00–12:00 PT</b>, freezes its high/low at noon, and watches the final hour into the 13:00 PT close. The current Edgeful trailing-12-month one-side, double-break, and no-break frequencies are loaded from the weekly Edgeful snapshot and shown in the live context/setup text. The Edgeful chart button opens selectable conditions; a purple range or level shows the selected collector reference. These are historical frequencies, not trade probabilities. The live engine only promotes a setup after a 5-minute close outside the range and still requires current delta/VWAP/bias confirmation.
+          The system builds a separate range from <b>11:00–12:00 PT</b>, freezes its high/low at noon, and watches the final hour into the 13:00 PT close. The current Edgeful trailing-12-month one-side, double-break, no-break, continuation-extension, and retracement frequencies are loaded from the weekly Edgeful snapshot and shown in the live context/setup text. The Edgeful chart button opens selectable conditions; a purple range or level shows the selected collector reference. These are historical frequencies, not trade probabilities. The live engine only promotes a setup after a 5-minute close outside the range and still requires current delta/VWAP/bias confirmation.
         </div>
       </details>
       <details>
@@ -1092,8 +1092,8 @@ function renderEdgefulContext(data){
   ).join("")||'<div class="reason">No Edgeful context applicable yet.</div>';
   const excluded=(e.excluded||[]).map(x=>x.reason).filter(Boolean);
   document.getElementById("edgefulMeta").textContent=
-    (e.source?e.source+" "+(e.ticker||"")+" · "+(e.lookback||"")+" · data through "+(e.asOf||"—")+(e.refreshedOn?" · refreshed "+e.refreshedOn:"")+" · ":"")+
-    "historical conditional frequencies only; separate from the 0–10 live score"+
+    (e.source?e.source+" "+(e.ticker||"")+" · "+(e.lookback||"")+" · data through "+(e.asOf||"—")+(e.refreshedOn?" · refreshed "+e.refreshedOn:"")+" · ":"")+ 
+    "historical condition and continuation statistics only; separate from the 0–10 live score"+
     (excluded.length?" · London→NY correlation excluded: "+excluded[0]:"");
 }
 
