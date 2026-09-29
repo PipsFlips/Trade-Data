@@ -598,6 +598,126 @@ function currentOrb(five,f5){
   };
 }
 
+const EDGEFUL_12M={
+  NQ:{
+    asOf:"2026-09-25",sample:257,
+    overnight:{anyBreak:89.5,oneSide:73.9,double:15.6,noBreak:10.5},
+    ib60:{single:81.7,double:9.7,neither:8.6},
+    prevDay:{highBreak:58,highFollowGreen:80,lowBreak:44,lowFollowRed:79},
+    gapFill:{up:52,down:58},
+    opening15:{greenToGreen:65.2,redToRed:55.5},
+    orb15:{oneSide:63.8,double:35.8,noBreak:.4},
+    atr14:{respected:69.6,exceeded:30.4},
+    adr14:{value:316.16,respected:55.6,exceeded:44.4},
+    londonNy:{note:"near 50/50; excluded from scoring"}
+  },
+  ES:{
+    asOf:"2026-09-25",sample:257,
+    overnight:{anyBreak:93.0,oneSide:73.9,double:19.1,noBreak:7.0},
+    ib60:{single:79.8,double:15.2,neither:5.1},
+    prevDay:{highBreak:56,highFollowGreen:78,lowBreak:46,lowFollowRed:80},
+    gapFill:{up:60,down:56},
+    opening15:{greenToGreen:61.3,redToRed:55.8},
+    orb15:{oneSide:59.1,double:40.5,noBreak:.4},
+    atr14:{respected:68.1,exceeded:31.9},
+    adr14:{value:53.57,respected:55.6,exceeded:44.4},
+    londonNy:{note:"near 50/50; excluded from scoring"}
+  }
+};
+
+function buildEdgefulContext({bars5m,orb,middayOrb,gaps,levels}){
+  const root=MARKET_SYMBOL==="MES"?"ES":"NQ", e=EDGEFUL_12M[root];
+  const now=nowPT(),day=now.startOf("day");
+  const rthStart=day.set({hour:6,minute:30,second:0,millisecond:0});
+  const rthEnd=day.set({hour:13,minute:0,second:0,millisecond:0});
+  const rthRows=between(bars5m||[],rthStart,now<rthEnd?now:rthEnd);
+  const items=[];
+  items.push({
+    key:"overnight",label:"Overnight range",
+    text:"Any side broken "+e.overnight.anyBreak.toFixed(1)+"% · one side only "+e.overnight.oneSide.toFixed(1)+"% · both "+e.overnight.double.toFixed(1)+"%",
+    sample:e.sample,applicable:true
+  });
+
+  if(now>=day.set({hour:6,minute:45}) && rthRows.length){
+    const open15=between(bars5m||[],rthStart,day.set({hour:6,minute:45}));
+    if(open15.length){
+      const z=summary(open15),green=+z.close>=+z.open;
+      const pct=green?e.opening15.greenToGreen:e.opening15.redToRed;
+      items.push({
+        key:"opening15",label:"Opening 15m",
+        text:(green?"Green":"Red")+" opening candle → same-color RTH close "+pct.toFixed(1)+"%",
+        sample:e.sample,applicable:true
+      });
+    }
+  }
+
+  if(orb?.formed){
+    items.push({
+      key:"orb15",label:"9:30 ET ORB",
+      text:"5m-close outcomes: one side "+e.orb15.oneSide.toFixed(1)+"% · both sides "+e.orb15.double.toFixed(1)+"%",
+      sample:e.sample,applicable:true
+    });
+  }
+
+  if(now>=day.set({hour:7,minute:30})){
+    const ibRows=between(bars5m||[],rthStart,day.set({hour:7,minute:30}));
+    if(ibRows.length){
+      const z=summary(ibRows),after=between(bars5m||[],day.set({hour:7,minute:30}),now<rthEnd?now:rthEnd);
+      const up=after.some(b=>+b.c>z.high),down=after.some(b=>+b.c<z.low);
+      const state=up&&down?"double break":up?"high broken":down?"low broken":"no close break yet";
+      items.push({
+        key:"ib60",label:"60m Initial Balance",
+        text:state+" · historical single break "+e.ib60.single.toFixed(1)+"% · both "+e.ib60.double.toFixed(1)+"%",
+        sample:e.sample,applicable:true
+      });
+    }
+  }
+
+  if(rthRows.length){
+    const rh=Math.max(...rthRows.map(b=>+b.h)),rl=Math.min(...rthRows.map(b=>+b.l));
+    const pdh=(levels||[]).find(x=>x.id==="pdh"),pdl=(levels||[]).find(x=>x.id==="pdl");
+    if(pdh&&rh>+pdh.price){
+      items.push({key:"pdh",label:"Previous-day high",text:"PDH broken · historically closes green "+e.prevDay.highFollowGreen.toFixed(1)+"% of PDH-break sessions",sample:Math.round(e.sample*e.prevDay.highBreak/100),applicable:true});
+    }
+    if(pdl&&rl<+pdl.price){
+      items.push({key:"pdl",label:"Previous-day low",text:"PDL broken · historically closes red "+e.prevDay.lowFollowRed.toFixed(1)+"% of PDL-break sessions",sample:Math.round(e.sample*e.prevDay.lowBreak/100),applicable:true});
+    }
+
+    const range=Math.max(0,rh-rl),adr=e.adr14.value;
+    items.push({
+      key:"range",label:"RTH range / ADR",
+      text:range.toFixed(2)+" pts = "+(adr?range/adr*100:0).toFixed(0)+"% of Edgeful 14d ADR reference "+adr.toFixed(2)+" · ATR respected "+e.atr14.respected.toFixed(1)+"%",
+      sample:e.sample,applicable:true
+    });
+  }
+
+  const rthGap=(gaps||[]).find(g=>g.kind==="RTH"&&!g.filled);
+  if(rthGap){
+    const pct=rthGap.direction==="UP"?e.gapFill.up:e.gapFill.down;
+    items.push({
+      key:"gap",label:"RTH gap",
+      text:(rthGap.direction==="UP"?"Gap up":"Gap down")+" · 100% fill frequency "+pct.toFixed(1)+"%",
+      sample:e.sample,applicable:true
+    });
+  }
+
+  if(middayOrb?.formed){
+    const close=middayOrb.stats?.close||{};
+    items.push({
+      key:"midday",label:"11–12 PT ORB",
+      text:"5m-close one-side "+Number(close.oneSidePct||0).toFixed(1)+"% · double "+Number(close.doublePct||0).toFixed(1)+"%",
+      sample:middayOrb.stats?.sampleSize||248,applicable:true
+    });
+  }
+
+  return {
+    source:"Edgeful",ticker:root,lookback:"12mo",asOf:e.asOf,
+    items:items.filter(x=>x.applicable).slice(-6),
+    excluded:[{key:"londonNy",reason:e.londonNy.note}],
+    note:"Historical conditional frequencies only; not current-trade probabilities and not included in the 0–10 score unless explicitly stated."
+  };
+}
+
 function currentMiddayOrb(five){
   const now=nowPT();
   const day=now.startOf("day");
@@ -1726,6 +1846,7 @@ function buildIndicatorPayload() {
   const orb=currentOrb(bars5m,f5);
   const middayOrb=currentMiddayOrb(bars5m);
   const gaps=detectOpeningGaps(bars5m,currentPrice,current5mAtr(bars5m,20));
+  const edgefulContext=buildEdgefulContext({bars5m,orb,middayOrb,gaps,levels});
   const rawAnalysis=buildMarketAnalysis({
     currentPrice,levels,f1,f5,signal:trapSignal,traps,orderBlocks,globexVwap,rthVwap,
     sessionCvd:relayFresh?relayState.currentGlobexCvd:(globexExact?.cvd??null),
@@ -1750,7 +1871,7 @@ function buildIndicatorPayload() {
   maybeSendSignalAlert(signal,currentPrice);
 
   return {
-    schemaVersion:"1.8",
+    schemaVersion:"1.9",
     marketSymbol:MARKET_SYMBOL,
     cutoff0530Pacific:(morningCutoff?.cutoffPacificDate===nowPT().toISODate())?{
       cutoffPacificDate:morningCutoff.cutoffPacificDate,
@@ -1789,6 +1910,7 @@ function buildIndicatorPayload() {
     gaps,
     orb,
     middayOrb,
+    edgefulContext,
     signal,
     analysis,
     marketStructure,
