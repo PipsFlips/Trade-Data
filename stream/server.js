@@ -265,15 +265,16 @@ function previousFullGlobex(rows) {
 }
 
 function currentSessions(rows) {
-  const now=nowPT();
+  // Canonical wall-clock windows in New York; calendar arithmetic preserves DST.
+  const now=nowPT().setZone("America/New_York");
   const today=now.startOf("day");
-  const sessionStart=(now.hour>=15?today:today.minus({days:1})).set({hour:15,minute:0,second:0,millisecond:0});
+  const sessionStart=(now.hour>=18?today:today.minus({days:1})).set({hour:18,minute:0,second:0,millisecond:0});
   const nextDay=sessionStart.plus({days:1}).startOf("day");
-  const overnightEnd=nextDay.set({hour:6,minute:30,second:0,millisecond:0});
-  const asiaStart=sessionStart.set({hour:17,minute:0,second:0,millisecond:0});
-  const asiaEnd=nextDay.set({hour:0,minute:0,second:0,millisecond:0});
-  const londonStart=nextDay.set({hour:0,minute:0,second:0,millisecond:0});
-  const londonEnd=nextDay.set({hour:5,minute:20,second:0,millisecond:0});
+  const overnightEnd=nextDay.set({hour:9,minute:30,second:0,millisecond:0});
+  const asiaStart=sessionStart.set({hour:20,minute:0,second:0,millisecond:0});
+  const asiaEnd=nextDay.set({hour:3,minute:0,second:0,millisecond:0});
+  const londonStart=asiaEnd;
+  const londonEnd=nextDay.set({hour:8,minute:30,second:0,millisecond:0});
 
   // Overnight levels/profile are defined only through the 06:30 PT RTH open.
   // Before 06:30 they build live; after 06:30 they are frozen for the day.
@@ -288,12 +289,18 @@ function currentSessions(rows) {
     london:now>=londonStart?summary(between(rows,londonStart,londonStop)):null,
     overnightRows,
     bounds:{
-      globexStartPacific:sessionStart.toISO(),
-      overnightEndPacific:overnightEnd.toISO(),
-      asiaStartPacific:asiaStart.toISO(),
-      asiaEndPacific:asiaEnd.toISO(),
-      londonStartPacific:londonStart.toISO(),
-      londonEndPacific:londonEnd.toISO()
+      timeZone:"America/New_York",
+      asiaStartEastern:asiaStart.toISO(),
+      asiaEndEastern:asiaEnd.toISO(),
+      londonStartEastern:londonStart.toISO(),
+      londonEndEastern:londonEnd.toISO(),
+      // Preserve the existing Pacific fields for payload consumers.
+      globexStartPacific:sessionStart.setZone(ZONE).toISO(),
+      overnightEndPacific:overnightEnd.setZone(ZONE).toISO(),
+      asiaStartPacific:asiaStart.setZone(ZONE).toISO(),
+      asiaEndPacific:asiaEnd.setZone(ZONE).toISO(),
+      londonStartPacific:londonStart.setZone(ZONE).toISO(),
+      londonEndPacific:londonEnd.setZone(ZONE).toISO()
     }
   };
 }

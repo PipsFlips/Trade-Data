@@ -164,9 +164,9 @@ canvas{display:block;width:100%;height:410px;border-radius:8px;background:#0d131
       <button class="layerbtn active" data-layer="structure">Structure</button>
     </div>
     <div style="display:flex;gap:12px;align-items:center;margin:0 0 5px 2px;font-size:9px;color:var(--muted)">
-      <span><i style="display:inline-block;width:12px;border-top:1px dotted #f2c94c;vertical-align:middle;margin-right:4px"></i>Asia 17:00</span>
-      <span><i style="display:inline-block;width:12px;border-top:1px dotted #57a4ff;vertical-align:middle;margin-right:4px"></i>London 00:00</span>
-      <span><i style="display:inline-block;width:12px;border-top:1px dotted #ffffff;vertical-align:middle;margin-right:4px"></i>NY 06:30</span>
+      <span><i style="display:inline-block;width:12px;border-top:1px dotted #f2c94c;vertical-align:middle;margin-right:4px"></i>Asia 20:00 ET</span>
+      <span><i style="display:inline-block;width:12px;border-top:1px dotted #57a4ff;vertical-align:middle;margin-right:4px"></i>London 03:00 ET</span>
+      <span><i style="display:inline-block;width:12px;border-top:1px dotted #ffffff;vertical-align:middle;margin-right:4px"></i>NY 09:30 ET</span>
       <span><i style="display:inline-block;width:12px;height:7px;background:rgba(49,196,141,.12);border:1px solid rgba(49,196,141,.5);vertical-align:middle;margin-right:4px"></i>15m Bull OB</span>
       <span><i style="display:inline-block;width:12px;height:7px;background:rgba(240,101,101,.12);border:1px solid rgba(240,101,101,.5);vertical-align:middle;margin-right:4px"></i>15m Bear OB</span>
       <span><i style="display:inline-block;width:14px;border-top:2px dashed #31c48d;vertical-align:middle;margin-right:4px"></i>ORB H</span>
@@ -251,7 +251,7 @@ canvas{display:block;width:100%;height:410px;border-radius:8px;background:#0d131
       <details>
         <summary>Asia High / Low and London High / Low</summary>
         <div class="legendBody">
-          <b>Asia</b> is currently defined as 17:00–00:00 PT. <b>London</b> is 00:00–05:20 PT. The high and low of each window become reference/liquidity levels. They are useful for sweeps, rejections, breakouts, and targets because price often reacts around prior session extremes.
+          <b>Asia</b> is 20:00–03:00 ET. <b>London</b> is 03:00–08:30 ET. These America/New_York windows automatically follow daylight saving time; each end time is excluded from its window. The high and low of each window become reference/liquidity levels. They are useful for sweeps, rejections, breakouts, and targets because price often reacts around prior session extremes.
         </div>
       </details>
       <details>
@@ -473,6 +473,11 @@ const layerForLevel=l=>{
 };
 const levelEnabled=l=>chartLayers[layerForLevel(l)]!==false;
 
+function etSessionMinutes(ts){
+  const parts=new Intl.DateTimeFormat("en-US",{timeZone:"America/New_York",hour:"2-digit",minute:"2-digit",hourCycle:"h23"}).formatToParts(new Date(ts));
+  const o={}; for(const p of parts) if(p.type!=="literal") o[p.type]=p.value;
+  return (+o.hour)*60+(+o.minute);
+}
 function ptParts(ts){
   const parts=new Intl.DateTimeFormat("en-US",{timeZone:"America/Los_Angeles",year:"numeric",month:"2-digit",day:"2-digit",hour:"2-digit",minute:"2-digit",hour12:false}).formatToParts(new Date(ts));
   const o={}; for(const p of parts) if(p.type!=="literal") o[p.type]=p.value;
@@ -620,12 +625,12 @@ function drawChart(data){
 
   // Session-start markers: low-opacity dotted vertical lines.
   const sessionStarts=[
-    {mins:1020,col:"#f2c94c"}, // Asia 17:00 PT
-    {mins:0,col:"#57a4ff"},    // London 00:00 PT
-    {mins:390,col:"#ffffff"}   // NY 06:30 PT
+    {mins:1200,col:"#f2c94c"}, // Asia 20:00 ET
+    {mins:180,col:"#57a4ff"},  // London 03:00 ET
+    {mins:570,col:"#ffffff"}   // NY 09:30 ET
   ];
   if(barKind==="5m" && chartLayers.sessions!==false) for(let i=0;i<bars.length;i++){
-    const mins=ptParts(bars[i].t).mins;
+    const mins=etSessionMinutes(bars[i].t);
     const mark=sessionStarts.find(z=>z.mins===mins);
     if(!mark) continue;
     ctx.save();
