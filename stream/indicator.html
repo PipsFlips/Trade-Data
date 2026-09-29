@@ -186,6 +186,14 @@ canvas{display:block;width:100%;height:410px;border-radius:8px;background:#0d131
     <div class="analysisNote" id="analysisNote">Conditional setups only.</div>
   </div>
 
+  <details class="section collapsibleSection" open>
+    <summary class="collapsibleSectionSummary">Edgeful historical context</summary>
+    <div style="padding:0 9px 9px">
+      <div class="rows" id="edgefulContext"></div>
+      <div class="analysisNote" id="edgefulMeta">Historical frequencies only; not current-trade probabilities.</div>
+    </div>
+  </details>
+
   <div class="section">
     <h3>Iceberg / absorption</h3>
     <div class="rows" id="icebergs"></div>
@@ -280,6 +288,12 @@ canvas{display:block;width:100%;height:410px;border-radius:8px;background:#0d131
         <summary>Market Structure — Trend / Range / Transition</summary>
         <div class="legendBody">
           Market Structure uses completed 5-minute price action with 15-minute confirmation. The trend score weights directional efficiency, normalized slope, HH/HL or LH/LL structure, rolling VWAP alignment, and 15-minute agreement. The range score weights low directional efficiency, candle overlap, VWAP crossings, compressed range width relative to ATR, and neutral swing structure. <b>RANGE</b> is drawn as a horizontal shaded box. <b>TREND UP/DOWN</b> is drawn as an adaptive regression channel: the centerline is the recent 5-minute regression fit, while the parallel upper/lower bands use 1.75× residual standard deviation with an ATR-based minimum width. <b>TRANSITION</b> means neither side has enough aligned evidence yet.
+        </div>
+      </details>
+      <details>
+        <summary>Edgeful historical context</summary>
+        <div class="legendBody">
+          Edgeful is used as a <b>historical-condition layer</b>, not as live order flow and not as a replacement for the collector. The panel can surface overnight-range behavior, 15-minute ORB behavior, 60-minute Initial Balance behavior, prior-day high/low follow-through, RTH gap-fill frequency, opening-candle continuation, and ATR/ADR context when the corresponding live condition exists. Historical percentages remain separate from the system's 0–10 live evidence score. London-to-New-York direction correlation is currently excluded because the trailing sample was approximately 50/50 and did not show a useful directional edge.
         </div>
       </details>
       <details>
@@ -980,6 +994,20 @@ function renderMarketStructure(data){
   document.getElementById("structureSub").textContent="Trend "+Number(ms.trendScore||0).toFixed(1)+"/10 · Range "+Number(ms.rangeScore||0).toFixed(1)+"/10 · score is weighted evidence alignment, not probability.";
 }
 
+function renderEdgefulContext(data){
+  const e=data.edgefulContext||{},el=document.getElementById("edgefulContext");
+  if(!el) return;
+  const items=(e.items||[]).slice(-4);
+  el.innerHTML=items.map(x=>
+    '<div class="row"><span>'+x.label+'</span><b style="text-align:right;font-size:10px">'+x.text+'</b></div>'
+  ).join("")||'<div class="reason">No Edgeful context applicable yet.</div>';
+  const excluded=(e.excluded||[]).map(x=>x.reason).filter(Boolean);
+  document.getElementById("edgefulMeta").textContent=
+    (e.source?e.source+" "+(e.ticker||"")+" · "+(e.lookback||"")+" · as of "+(e.asOf||"—")+" · ":"")+
+    "historical conditional frequencies only; separate from the 0–10 live score"+
+    (excluded.length?" · London→NY correlation excluded: "+excluded[0]:"");
+}
+
 function renderAnalysis(data){
   const a=data.analysis||{};
   const pill=document.getElementById("biasPill");
@@ -1059,7 +1087,7 @@ async function refresh(){
     se.textContent=sig;se.className="s "+(sig==="BUY"?"buy":sig==="SELL"?"sell":"neutral");
     document.getElementById("score").textContent=(Number(d.signal?.score||0)/10).toFixed(1)+"/10";
     document.getElementById("reason").textContent=(d.signal?.reasons||[]).join(" • ")||"No confirmed trap signal yet.";
-    renderClosePressure(d);renderMarketStructure(d);renderAnalysis(d);renderIcebergs(d);renderRestingLiquidity(d);nearestLevels(d);trapRows(d);renderGaps(d);drawChart(d);
+    renderClosePressure(d);renderMarketStructure(d);renderAnalysis(d);renderEdgefulContext(d);renderIcebergs(d);renderRestingLiquidity(d);nearestLevels(d);trapRows(d);renderGaps(d);drawChart(d);
     status.textContent=(d.connected?"Live feed connected":"Feed reconnecting")+" · auto refresh 2s";
   }catch(e){
     status.textContent="Indicator error: "+e.message;
