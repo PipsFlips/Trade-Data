@@ -976,6 +976,8 @@ function buildMarketAnalysis({currentPrice,levels,f1,f5,signal,traps,orderBlocks
     edgefulChecks.push({label,side,support:+support.toFixed(2),text:check.text});
     if(Math.abs(support)>=.25) reasons.push("Edgeful "+label+" "+(support>0?"supports ":"conflicts with ")+side+" · "+check.text);
   };
+  const addEdgefulContextCheck=(label,text)=>edgefulChecks.push({label,side:"NEUTRAL",support:0,text});
+  let insideDayBreakoutBoost=0,insideDayContextText="";
 
   if(Number.isFinite(activeVwap)){
     if(currentPrice>activeVwap){biasPoints+=2;reasons.push("price above active VWAP");}
@@ -1021,6 +1023,30 @@ function buildMarketAnalysis({currentPrice,levels,f1,f5,signal,traps,orderBlocks
     addEdgefulCheck("opening-candle continuation",side,edgeRateCheck(rate,"same-color RTH close "+edgePct(rate)));
   }
   const closedBars=(bars5m||[]).filter(b=>Date.parse(b.t)+300000<=Date.now());
+  const ptNow=nowPT();
+  const rthDay=ptNow.startOf("day");
+  const rthStart=rthDay.set({hour:6,minute:30,second:0,millisecond:0});
+  const rthClose=rthDay.set({hour:13,minute:0,second:0,millisecond:0});
+  const minuteNow=ptNow.hour*60+ptNow.minute;
+  let edgePriorRth=null,edgePriorDay=null;
+  let searchDay=(minuteNow>=780?rthDay:rthDay.minus({days:1}));
+  for(let n=0;n<8&&!edgePriorRth;n++){
+    const d=searchDay.minus({days:n}),s0=d.set({hour:6,minute:30,second:0,millisecond:0}),t0=d.set({hour:13,minute:0,second:0,millisecond:0});
+    const xs=between(closedBars,s0,t0);
+    if(xs.length>=78){edgePriorRth=summary(xs);edgePriorDay=d;break;}
+    if(xs.length) break;
+  }
+  const edgePriorColor=edgePriorRth&&edgePriorRth.close!==edgePriorRth.open?(edgePriorRth.close>edgePriorRth.open?"green":"red"):null;
+  const rthOpenBar=(bars5m||[]).find(b=>Date.parse(b.t)===rthStart.toUTC().toMillis())||null;
+  if(edgePriorRth&&rthOpenBar&&+rthOpenBar.o>=edgePriorRth.low&&+rthOpenBar.o<=edgePriorRth.high&&edgePriorRth.close){
+    const priorRangePct=100*(edgePriorRth.high-edgePriorRth.low)/Math.abs(edgePriorRth.close);
+    const insideKey=edgeInsideBucketKey(priorRangePct),inside=edgeHistory.insideDayBreakout?.buckets?.[insideKey];
+    if(inside&&Number.isFinite(+inside.breakout)){
+      insideDayBreakoutBoost=+inside.breakout>=80?3:+inside.breakout>=70?2:0;
+      insideDayContextText="prior range "+priorRangePct.toFixed(2)+"% · break PDH/PDL "+edgePct(inside.breakout)+" · n="+inside.sample;
+      addEdgefulContextCheck("inside-day breakout",insideDayContextText);
+    }
+  }
   const rangeBreak=(end,high,low)=>{
     if(!end||!Number.isFinite(+high)||!Number.isFinite(+low)) return {up:false,down:false};
     const after=closedBars.filter(b=>Date.parse(b.t)>=Date.parse(end));
@@ -1031,8 +1057,6 @@ function buildMarketAnalysis({currentPrice,levels,f1,f5,signal,traps,orderBlocks
     const side=br.up&&!br.down?"BUY":br.down&&!br.up?"SELL":null;
     if(side) addEdgefulCheck("15m ORB continuation",side,edgeSideCheck(edgeHistory.orb15,side));
   }
-  const ptNow=nowPT();
-  const rthDay=ptNow.startOf("day");
   const ibStart=rthDay.set({hour:6,minute:30,second:0,millisecond:0});
   const ibEnd=rthDay.set({hour:7,minute:30,second:0,millisecond:0});
   if(ptNow>=ibEnd){
@@ -1041,6 +1065,15 @@ function buildMarketAnalysis({currentPrice,levels,f1,f5,signal,traps,orderBlocks
       const ib=summary(ibRows),br=rangeBreak(ibEnd,ib.high,ib.low);
       const side=br.up&&!br.down?"BUY":br.down&&!br.up?"SELL":null;
       if(side) addEdgefulCheck("60m IB continuation",side,edgeSideCheck(edgeHistory.ib60,side));
+      if(Number.isFinite(+ib.open)&&+ib.open!==0){
+        const ibPct=100*(ib.high-ib.low)/Math.abs(ib.open);
+        const ibKey=edgeIbBucketKey(ibPct),ibBucket=ibKey?edgeHistory.ib60BySize?.buckets?.[ibKey]:null;
+        if(ibBucket&&Number.isFinite(+ibBucket.singleBreak)){
+          const text="IB size "+ibPct.toFixed(2)+"% · single-break "+edgePct(ibBucket.singleBreak)+" · double "+edgePct(ibBucket.doubleBreak)+" · n="+ibBucket.sample;
+          if(side) addEdgefulCheck("60m IB size bucket",side,{score:edgeClamp((+ibBucket.singleBreak-50)/50),text});
+          else addEdgefulContextCheck("60m IB size bucket",text);
+        }
+      }
     }
   }
   if(middayOrb?.formed && middayOrb.active && (middayOrb.closeState==="UP BREAK"||middayOrb.closeState==="DOWN BREAK")){
@@ -1049,17 +1082,27 @@ function buildMarketAnalysis({currentPrice,levels,f1,f5,signal,traps,orderBlocks
   }
   if(orb?.formed){
     const pdh=(levels||[]).find(x=>x.id==="pdh"),pdl=(levels||[]).find(x=>x.id==="pdl");
+    const colorStats=edgePriorColor?edgeHistory.prevDayColor?.[edgePriorColor]:null;
     if(pdh&&Number.isFinite(+pdh.price)&&+currentPrice>+pdh.price){
-      addEdgefulCheck("prior-high follow-through","BUY",edgeRateCheck(edgeHistory.prevDay?.highFollowGreen,"RTH close green after PDH break "+edgePct(edgeHistory.prevDay?.highFollowGreen)));
+      const c=colorStats?.highFollowGreen,rate=Number.isFinite(+c?.rate)?+c.rate:edgeHistory.prevDay?.highFollowGreen;
+      addEdgefulCheck("prior-high follow-through","BUY",edgeRateCheck(rate,
+        (edgePriorColor?"prior "+edgePriorColor+" day · ":"")+"RTH close green after PDH break "+edgePct(rate)+(Number.isFinite(+c?.sample)?" · n="+c.sample:"")));
     }else if(pdl&&Number.isFinite(+pdl.price)&&+currentPrice<+pdl.price){
-      addEdgefulCheck("prior-low follow-through","SELL",edgeRateCheck(edgeHistory.prevDay?.lowFollowRed,"RTH close red after PDL break "+edgePct(edgeHistory.prevDay?.lowFollowRed)));
+      const c=colorStats?.lowFollowRed,rate=Number.isFinite(+c?.rate)?+c.rate:edgeHistory.prevDay?.lowFollowRed;
+      addEdgefulCheck("prior-low follow-through","SELL",edgeRateCheck(rate,
+        (edgePriorColor?"prior "+edgePriorColor+" day · ":"")+"RTH close red after PDL break "+edgePct(rate)+(Number.isFinite(+c?.sample)?" · n="+c.sample:"")));
     }
   }
   const activeGap=(gaps||[]).find(g=>g.near&&!g.filled);
   if(activeGap){
-    const side=activeGap.fillDirection;
-    const rate=activeGap.direction==="UP"?edgeHistory.gapFill?.up:edgeHistory.gapFill?.down;
-    addEdgefulCheck("gap-fill tendency",side,edgeRateCheck(rate,(activeGap.direction==="UP"?"up":"down")+" gap full-fill "+edgePct(rate)));
+    const side=activeGap.fillDirection,gapSide=activeGap.direction==="UP"?"up":"down";
+    const gapPct=Number.isFinite(+activeGap.priorClose)&&+activeGap.priorClose!==0?100*Math.abs(+activeGap.size)/Math.abs(+activeGap.priorClose):null;
+    const gapKey=edgeGapBucketKey(gapPct),bucket=gapKey?edgeHistory.gapFillBySize?.buckets?.[gapKey]?.[gapSide]:null;
+    const useBucket=bucket&&Number.isFinite(+bucket.fill)&&Number.isFinite(+bucket.sample)&&+bucket.sample>=15;
+    const rate=useBucket?+bucket.fill:(gapSide==="up"?edgeHistory.gapFill?.up:edgeHistory.gapFill?.down);
+    const text=(gapSide==="up"?"up":"down")+" gap full-fill "+edgePct(rate)+
+      (useBucket?" · "+gapKey+"% gap · n="+bucket.sample:" · all-size baseline");
+    addEdgefulCheck("gap-fill tendency",side,edgeRateCheck(rate,text));
   }
   const overnightStart=(ptNow.hour>=15?ptNow:ptNow.minus({days:1})).startOf("day").set({hour:15,minute:0,second:0,millisecond:0});
   const overnightEnd=overnightStart.plus({days:1}).set({hour:6,minute:30,second:0,millisecond:0});
@@ -1083,6 +1126,13 @@ function buildMarketAnalysis({currentPrice,levels,f1,f5,signal,traps,orderBlocks
   const setups=[];
   const edgefulBias=edgefulPoints>=.75?"BUY":edgefulPoints<=-.75?"SELL":"NEUTRAL";
   const edgefulSetupAdjustment=side=>edgefulBias==="NEUTRAL"?0:edgefulBias===side?5:-5;
+  const insideDaySetupAdjustment=setup=>{
+    if(!insideDayBreakoutBoost||!setup) return 0;
+    const t=String(setup.title||"");
+    if(setup.side==="BUY"&&/(PDH|prior[^a-z]*high)/i.test(t)) return insideDayBreakoutBoost;
+    if(setup.side==="SELL"&&/(PDL|prior[^a-z]*low)/i.test(t)) return insideDayBreakoutBoost;
+    return 0;
+  };
   const edgefulSetupContext=side=>{
     const checks=edgefulChecks.filter(x=>x.side===side&&Math.abs(x.support)>=.25).slice(0,2);
     if(!checks.length) return edgefulBias!=="NEUTRAL"&&edgefulBias!==side?"Edgeful qualifier conflicts; require stronger live confirmation":"";
@@ -1260,7 +1310,8 @@ function buildMarketAnalysis({currentPrice,levels,f1,f5,signal,traps,orderBlocks
         :"5m rejection back above the gap-open edge."),
       target:"Gap fill "+nearGap.fillTarget.toFixed(2),
       quality,
-      context:"Unfilled "+nearGap.label+" "+nearGap.direction.toLowerCase()+" gap · "+nearGap.distance.toFixed(2)+" pts away · volume "+(Number.isFinite(volRatio)?volRatio.toFixed(2)+"×":"n/a")
+      context:"Unfilled "+nearGap.label+" "+nearGap.direction.toLowerCase()+" gap · "+nearGap.distance.toFixed(2)+" pts away · volume "+(Number.isFinite(volRatio)?volRatio.toFixed(2)+"×":"n/a")+
+        (()=>{const gp=Number.isFinite(+nearGap.priorClose)&&+nearGap.priorClose!==0?100*Math.abs(+nearGap.size)/Math.abs(+nearGap.priorClose):null,k=edgeGapBucketKey(gp),b=k?edgeHistory.gapFillBySize?.buckets?.[k]?.[nearGap.direction==="UP"?"up":"down"]:null;return b&&+b.sample>=15?" · Edgeful "+k+"% full-fill "+edgePct(b.fill)+" · n="+b.sample:"";})()
     });
   }
 
@@ -1289,9 +1340,11 @@ function buildMarketAnalysis({currentPrice,levels,f1,f5,signal,traps,orderBlocks
   // deliberately small: live collector flow, structure, VWAP, and location
   // remain the primary evidence and can override a historical lean.
   for(const setup of setups){
-    if(Number.isFinite(+setup.quality)) setup.quality=Math.max(0,Math.min(100,+setup.quality+edgefulSetupAdjustment(setup.side)));
+    const insideAdj=insideDaySetupAdjustment(setup);
+    if(Number.isFinite(+setup.quality)) setup.quality=Math.max(0,Math.min(100,+setup.quality+edgefulSetupAdjustment(setup.side)+insideAdj));
     const edgeContext=edgefulSetupContext(setup.side);
     if(edgeContext) setup.context=(setup.context?setup.context+" · ":"")+edgeContext;
+    if(insideAdj&&insideDayContextText) setup.context=(setup.context?setup.context+" · ":"")+"Edgeful inside-day breakout qualifier · "+insideDayContextText;
   }
   const dedup=[];
   for(const x of setups.sort((a,b)=>(+b.quality||0)-(+a.quality||0))){
