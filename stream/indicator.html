@@ -88,6 +88,17 @@ canvas{display:block;width:100%;height:410px;border-radius:8px;background:#0d131
   canvas{height:350px}
   .rows{grid-template-columns:1fr}
 }
+/* Historical context belongs to the chart, with one inspectable overlay at a time. */
+.edgeChart{border:1px solid #514978;border-radius:10px;background:linear-gradient(120deg,#17172b,#111923);padding:10px;margin:8px 0}
+.edgeHeading{display:flex;justify-content:space-between;gap:8px;font-size:10px;color:#c5b5ff;letter-spacing:.05em}
+.edgeTabs{display:flex;gap:5px;overflow-x:auto;padding:9px 0;scrollbar-width:thin}
+.edgeTab{flex:0 0 auto;border:1px solid #39364d;border-radius:6px;background:#151b26;color:#a9b4c4;font-size:11px;padding:7px 9px;cursor:pointer}
+.edgeTab[aria-pressed="true"]{background:#322b4c;border-color:#b7a1f7;color:#fff}
+.edgeState{font-size:12px;color:#eef3f8;font-weight:700;margin-bottom:4px}
+.edgeStat{font-size:12px;line-height:1.55;color:#cfbfff;font-variant-numeric:tabular-nums}
+.edgeDetail,.edgeMeta,.edgeCaution{font-size:10px;line-height:1.5;color:#9aa8bb;margin-top:5px}
+.edgeMeta{padding-top:6px;border-top:1px solid #303047}
+.edgeNotes{margin-top:7px}.edgeNotes summary{font-size:10px;color:#9aa8bb;cursor:pointer}
 </style>
 </head>
 <body>
@@ -162,6 +173,7 @@ canvas{display:block;width:100%;height:410px;border-radius:8px;background:#0d131
       <button class="layerbtn active" data-layer="absorption">Absorption</button>
       <button class="layerbtn active" data-layer="liquidity">Liquidity</button>
       <button class="layerbtn active" data-layer="structure">Structure</button>
+      <button class="layerbtn active" data-layer="edgeful">Edgeful</button>
     </div>
     <div style="display:flex;gap:12px;align-items:center;margin:0 0 5px 2px;font-size:9px;color:var(--muted)">
       <span><i style="display:inline-block;width:12px;border-top:1px dotted #f2c94c;vertical-align:middle;margin-right:4px"></i>Asia 20:00 ET</span>
@@ -173,6 +185,7 @@ canvas{display:block;width:100%;height:410px;border-radius:8px;background:#0d131
       <span><i style="display:inline-block;width:14px;border-top:2px dashed #f06565;vertical-align:middle;margin-right:4px"></i>ORB L</span>
       <span><i style="display:inline-block;width:14px;border-top:2px dashed #b084ff;vertical-align:middle;margin-right:4px"></i>11-12 ORB</span>
     </div>
+    <section id="edgeChart" class="edgeChart" aria-label="Edgeful chart context"></section>
     <canvas id="chart"></canvas>
   </div>
 
@@ -299,7 +312,7 @@ canvas{display:block;width:100%;height:410px;border-radius:8px;background:#0d131
       <details>
         <summary>11:00–12:00 PT Midday ORB</summary>
         <div class="legendBody">
-          The system builds a separate range from <b>11:00–12:00 PT</b>, freezes its high/low at noon, and watches the final hour into the 13:00 PT close. The current Edgeful trailing-12-month one-side, double-break, and no-break frequencies are loaded from the weekly Edgeful snapshot and shown in the live context/setup text. These are historical frequencies, not trade probabilities. The live engine only promotes a setup after a 5-minute close outside the range and still requires current delta/VWAP/bias confirmation.
+          The system builds a separate range from <b>11:00–12:00 PT</b>, freezes its high/low at noon, and watches the final hour into the 13:00 PT close. The current Edgeful trailing-12-month one-side, double-break, and no-break frequencies are loaded from the weekly Edgeful snapshot and shown in the live context/setup text. The Edgeful chart button opens selectable conditions; a purple range or level shows the selected collector reference. These are historical frequencies, not trade probabilities. The live engine only promotes a setup after a 5-minute close outside the range and still requires current delta/VWAP/bias confirmation.
         </div>
       </details>
       <details>
@@ -457,7 +470,7 @@ const levelColor=l=>{
 let chartBarCount=48;
 let chartMode="intraday";
 let lastData=null;
-const defaultChartLayers={sessions:true,prior:true,profiles:true,pivots:true,ob:true,orb:true,middayOrb:true,vwap:true,traps:true,absorption:true,liquidity:true,structure:true};
+const defaultChartLayers={sessions:true,prior:true,profiles:true,pivots:true,ob:true,orb:true,middayOrb:true,vwap:true,traps:true,absorption:true,liquidity:true,structure:true,edgeful:true};
 let chartLayers={...defaultChartLayers};
 try{
   const saved=JSON.parse(localStorage.getItem("mnqChartLayers")||"null");
@@ -518,8 +531,62 @@ function resizeCanvas(c){
   return {w:rect.width,h:rect.height,ctx};
 }
 
+let edgeSelection=null,edgeSession=null,edgeMarkupKey=null;
+function renderEdgefulChart(data){
+  const host=document.getElementById("edgeChart"),e=data.edgefulContext?.chart;
+  host.hidden=chartLayers.edgeful===false;
+  if(host.hidden)return null;
+  if(!e){host.textContent="Edgeful chart context unavailable.";edgeMarkupKey=null;return null;}
+  const session=(data.marketSymbol||"")+e.sessionDate;
+  if(edgeSession!==session){edgeSelection=null;edgeSession=session;}
+  const items=e.items||[];
+  const selected=items.find(i=>i.key===edgeSelection)||[...items].sort((a,b)=>b.priority-a.priority)[0];
+  const signature=JSON.stringify([e,selected?.key,chartMode]);
+  if(signature!==edgeMarkupKey){
+    edgeMarkupKey=signature;
+    host.innerHTML='<div class="edgeHeading"><strong>EDGEFUL · HISTORICAL CONTEXT</strong><span id="edgePhase"></span></div><div class="edgeTabs" role="group" aria-label="Historical conditions"></div><div class="edgeState"></div><div class="edgeStat"></div><div class="edgeCaution">Historical frequencies · not trade win rates</div><details class="edgeNotes"><summary class="edgeSummary"></summary><div class="edgeDetail"></div><div class="edgeMeta"></div></details>';
+    host.querySelector('#edgePhase').textContent=e.phase+' · '+e.sessionDate+(e.collectorStale?' · BARS STALE':'')+(e.rthCoverage===false?' · PARTIAL RTH':'');
+    const tabs=host.querySelector('.edgeTabs');
+    for(const item of items){
+      const button=document.createElement('button');button.className='edgeTab';button.type='button';
+      button.textContent=item.label;button.setAttribute('aria-pressed',String(item.key===selected?.key));
+      button.addEventListener('click',()=>{edgeSelection=item.key;if(lastData)drawChart(lastData);});tabs.appendChild(button);
+    }
+    host.querySelector('.edgeState').textContent=selected?selected.label+' — '+selected.state:'No historical conditions available';
+    host.querySelector('.edgeStat').textContent=selected?.stat||'';
+    host.querySelector('.edgeDetail').textContent=(selected?.detail||'')+(chartMode==='1w'||chartMode==='1m'?' Overlays are shown on intraday 5-minute views.':'')+' Tap a condition to highlight its collector range or level. Off-screen levels do not change chart scale.';
+    host.querySelector('.edgeSummary').textContent=e.ticker+' · '+e.lookback+' · through '+e.asOf+(e.stale?' · OLD BASELINE':'')+' · Source & method';
+    host.querySelector('.edgeMeta').textContent=e.ticker+' · '+e.lookback+' · through '+e.asOf+(e.stale?' · OLD BASELINE':'')+' · baseline window '+e.baselineSessions+' sessions (not a conditional sample). '+e.note;
+  }
+  return selected;
+}
+function drawEdgefulOverlay(ctx,item,bars,x,y,left,top,cw,ch,min,max){
+  const g=item?.geometry;if(!g||!bars.length)return;
+  const first=Date.parse(bars[0].t),last=Date.parse(bars.at(-1).t)+300000;
+  if(Date.parse(g.start)>=last||Date.parse(g.monitorEnd)<=first)return;
+  if(g.high<min||g.low>max)return;
+  const pos=t=>{
+    const ms=Date.parse(t);if(ms<=first)return left;if(ms>=last)return left+cw;
+    const i=bars.findIndex(b=>Date.parse(b.t)>=ms);return x(i<0?bars.length-1:i);
+  };
+  ctx.save();ctx.beginPath();ctx.rect(left,top,cw,ch);ctx.clip();
+  ctx.strokeStyle='#b9a0ff';ctx.fillStyle='rgba(173,143,255,.075)';ctx.lineWidth=1.5;ctx.setLineDash([3,4]);
+  const start=pos(g.start),end=pos(g.end),right=pos(g.monitorEnd);
+  const high=y(Math.min(max,g.high)),low=y(Math.max(min,g.low));
+  if(g.high!==g.low&&end>start)ctx.fillRect(start,high,end-start,low-high);
+  for(const [price,anchor] of [[g.high,g.highTime],[g.low,g.lowTime]]){
+    if(price<min||price>max)continue;
+    ctx.beginPath();ctx.moveTo(pos(anchor),y(price));ctx.lineTo(right,y(price));ctx.stroke();
+    if(g.high===g.low)break;
+  }
+  ctx.setLineDash([]);ctx.font='bold 10px -apple-system,BlinkMacSystemFont,Segoe UI,Arial';ctx.textAlign='left';
+  const label='EF · '+item.label,tw=ctx.measureText(label).width;
+  ctx.fillStyle='#211d32';ctx.fillRect(left+4,top+ch-20,tw+12,17);
+  ctx.fillStyle='#d4c3ff';ctx.fillText(label,left+10,top+ch-11);ctx.restore();
+}
 function drawChart(data){
   lastData=data;
+  const edgeItem=renderEdgefulChart(data);
   const c=document.getElementById("chart");
   const {w,h,ctx}=resizeCanvas(c);
   ctx.clearRect(0,0,w,h);
@@ -564,6 +631,8 @@ function drawChart(data){
     ctx.beginPath();ctx.moveTo(left,py);ctx.lineTo(w-right,py);ctx.stroke();
     ctx.fillStyle="#718094";ctx.fillText(fmt(price),w-6,py);
   }
+
+  if(barKind==="5m" && chartLayers.edgeful!==false) drawEdgefulOverlay(ctx,edgeItem,bars,x,y,left,top,cw,ch,min,max);
 
   // Small active volatility readout in the upper-left chart margin.
   const atr5=+data.volatility?.atr5m20;
@@ -1002,7 +1071,7 @@ function renderMarketStructure(data){
 function renderEdgefulContext(data){
   const e=data.edgefulContext||{},el=document.getElementById("edgefulContext");
   if(!el) return;
-  const items=(e.items||[]).slice(-4);
+  const items=(e.items||[]).filter(x=>x.applicable);
   el.innerHTML=items.map(x=>
     '<div class="row"><span>'+x.label+'</span><b style="text-align:right;font-size:10px">'+x.text+'</b></div>'
   ).join("")||'<div class="reason">No Edgeful context applicable yet.</div>';

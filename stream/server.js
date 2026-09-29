@@ -607,96 +607,106 @@ function currentOrb(five,f5){
 
 const EDGEFUL_12M=require("./edgeful-baselines.json");
 
-function buildEdgefulContext({bars5m,orb,middayOrb,gaps,levels}){
-  const root=MARKET_SYMBOL==="MES"?"ES":"NQ", e=EDGEFUL_12M[root];
-  const now=nowPT(),day=now.startOf("day");
-  const rthStart=day.set({hour:6,minute:30,second:0,millisecond:0});
-  const rthEnd=day.set({hour:13,minute:0,second:0,millisecond:0});
-  const rthRows=between(bars5m||[],rthStart,now<rthEnd?now:rthEnd);
-  const items=[];
-  items.push({
-    key:"overnight",label:"Overnight range",
-    text:"Any side broken "+e.overnight.anyBreak.toFixed(1)+"% · one side only "+e.overnight.oneSide.toFixed(1)+"% · both "+e.overnight.double.toFixed(1)+"%",
-    sample:e.sample,applicable:true
-  });
-
-  if(now>=day.set({hour:6,minute:45}) && rthRows.length){
-    const open15=between(bars5m||[],rthStart,day.set({hour:6,minute:45}));
-    if(open15.length){
-      const z=summary(open15),green=+z.close>=+z.open;
-      const pct=green?e.opening15.greenToGreen:e.opening15.redToRed;
-      items.push({
-        key:"opening15",label:"Opening 15m",
-        text:(green?"Green":"Red")+" opening candle → same-color RTH close "+pct.toFixed(1)+"%",
-        sample:e.sample,applicable:true
-      });
-    }
+// Chart-only historical context. Never feeds setup scores or substitutes prices.
+function buildEdgefulChartContext(bars5m){
+  const now=nowPT().setZone("America/New_York");
+  const day=(now.hour>=18?now.plus({days:1}):now).startOf("day");
+  const at=(hour,minute=0)=>day.set({hour,minute,second:0,millisecond:0});
+  const open=at(9,30),close=at(16),stop=now<close?now:close;
+  const root=MARKET_SYMBOL==="MES"?"ES":"NQ",e=EDGEFUL_12M[root];
+  if(!e) return {items:[],sessionDate:day.toISODate(),note:"Historical baseline unavailable"};
+  const rows=(bars5m||[]).filter(b=>Date.parse(b.t)+300000<=now.toMillis()&&[b.o,b.h,b.l,b.c].every(v=>v!==null&&Number.isFinite(+v))).sort((a,b)=>Date.parse(a.t)-Date.parse(b.t));
+  const window=(s,t)=>between(rows,s,t);
+  const complete=(s,t)=>{
+    const times=new Set(window(s,t).map(b=>Date.parse(b.t)));
+    for(let ms=s.toMillis();ms<t.toMillis();ms+=300000) if(!times.has(ms)) return false;
+    return now>=t;
+  };
+  const range=bs=>{
+    if(!bs.length)return null;
+    const z=summary(bs);
+    return {...z,highTime:bs.find(b=>+b.h===z.high).t,lowTime:bs.find(b=>+b.l===z.low).t};
+  };
+  const rth=window(open,stop),r=range(rth),items=[];
+  const pct=v=>Number.isFinite(v)?v.toFixed(1)+"%":"unavailable";
+  const add=(key,label,state,stat,geometry=null,priority=0,extra={})=>items.push({key,label,state,stat,geometry,priority,...extra});
+  const geometry=(z,s,t)=>z?{high:z.high,low:z.low,highTime:z.highTime,lowTime:z.lowTime,start:s.toISO(),end:t.toISO(),monitorEnd:close.toISO()}:null;
+  const breakState=(bs,z,method="close")=>{
+    const up=bs.some(b=>+(method==="close"?b.c:b.h)>z.high),down=bs.some(b=>+(method==="close"?b.c:b.l)<z.low);
+    return up&&down?"Both sides broken":up?"High broken":down?"Low broken":"No break yet";
+  };
+  const globex=day.minus({days:1}).set({hour:18}),on=range(window(globex,now<open?now:open));
+  const onComplete=complete(globex,open);
+  add("overnight","Overnight",now<open?"Building · completed bars":onComplete?breakState(rth,on,"wick"):"Collector coverage incomplete",
+    "Any-side break "+pct(e.overnight.anyBreak)+" · one side "+pct(e.overnight.oneSide)+" · both "+pct(e.overnight.double)+" · neither "+pct(e.overnight.noBreak),
+    now<open?geometry(on,globex,now):onComplete?geometry(on,globex,open):null,10,
+    {detail:"Full-session historical outcomes; building overnight levels can change."});
+  const rangeCondition=(key,label,s,t,hist,priority)=>{
+    if(now<t){add(key,label,"Forms by "+t.toFormat("HH:mm")+" ET","Waiting for completed collector bars");return null;}
+    if(!complete(s,t)){add(key,label,"Collector coverage incomplete","Historical condition unavailable");return null;}
+    const z=range(window(s,t)),after=window(t,stop);
+    add(key,label,breakState(after,z),hist,geometry(z,s,t),priority,{detail:"Break state uses completed 5-minute closes. Historical frequencies describe the full observation window."});
+    return z;
+  };
+  const z15=rangeCondition("orb15","15m ORB",open,at(9,45),"5m-close: one side "+pct(e.orb15.oneSide)+" · both "+pct(e.orb15.double)+" · neither "+pct(e.orb15.noBreak),30);
+  rangeCondition("ib60","60m IB",open,at(10,30),"Single break "+pct(e.ib60.single)+" · both "+pct(e.ib60.double)+" · neither "+pct(e.ib60.neither),40);
+  if(z15){
+    const green=z15.close>z15.open,doji=z15.close===z15.open;
+    add("opening15","Opening candle",doji?"Doji · no directional condition":green?"Green opening 15m":"Red opening 15m",doji?"No doji baseline provided":"Same-color RTH close "+pct(green?e.opening15.greenToGreen:e.opening15.redToRed),geometry(z15,open,at(9,45)),20,{detail:"RTH candle color; this is not the return from an entry at the opening-range break. Conditional sample count unavailable."});
+  }else add("opening15","Opening candle","Waiting for complete 09:30–09:45 ET range","Historical condition unavailable");
+  // Find a complete preceding RTH session, including Friday before Monday.
+  let prior=null,priorDay=null;
+  for(let n=1;n<=7&&!prior;n++){
+    const d=day.minus({days:n}),s=d.set({hour:9,minute:30}),t=d.set({hour:16});
+    if(complete(s,t)){prior=range(window(s,t));priorDay=d;}
+    else if(window(s,t).length) break; // Never silently skip a partial prior session.
   }
-
-  if(orb?.formed){
-    items.push({
-      key:"orb15",label:"9:30 ET ORB",
-      text:"5m-close outcomes: one side "+e.orb15.oneSide.toFixed(1)+"% · both sides "+e.orb15.double.toFixed(1)+"%",
-      sample:e.sample,applicable:true
-    });
+  for(const [key,label,side,follow] of [["pdh","Prior high","high",e.prevDay.highFollowGreen],["pdl","Prior low","low",e.prevDay.lowFollowRed]]){
+    const broken=prior&&r&&(side==="high"?r.high>prior.high:r.low<prior.low);
+    const price=prior?.[side],anchor=prior?.[side+"Time"];
+    add(key,label,!prior?"Prior RTH coverage incomplete":broken?"Broken during RTH":now<open?"Waiting for RTH":"Not broken during RTH",
+      broken?"Of "+(side==="high"?"PDH":"PDL")+"-break sessions, RTH closes "+(side==="high"?"green ":"red ")+pct(follow):"Historical follow-through activates after the level breaks",
+      prior?{high:price,low:price,highTime:anchor,lowTime:anchor,start:anchor,end:open.toISO(),monitorEnd:close.toISO()}:null,broken?60:5,
+      {detail:"Prior RTH: "+(priorDay?.toISODate()||"unavailable")+". Conditional sample count unavailable; candle color is not a trade win rate."});
   }
+  const first=rth.find(b=>Date.parse(b.t)===open.toMillis());
+  if(prior&&first){
+    const up=+first.o>prior.close,equal=+first.o===prior.close;
+    const filled=up?r.low<=prior.close:r.high>=prior.close;
+    add("gap","RTH gap",equal?"No opening gap":filled?"Filled during RTH":up?"Gap up · unfilled":"Gap down · unfilled",
+      equal?"No gap condition":"Full-fill frequency "+pct(up?e.gapFill.up:e.gapFill.down),
+      equal?null:{high:Math.max(+first.o,prior.close),low:Math.min(+first.o,prior.close),highTime:open.toISO(),lowTime:open.toISO(),start:open.toISO(),end:close.toISO(),monitorEnd:close.toISO()},filled?15:50,
+      {detail:"Today's RTH gap only. Prior close "+prior.close.toFixed(2)+"; conditional sample count unavailable."});
+  }else add("gap","RTH gap","Waiting for RTH open / prior-close coverage","Historical condition unavailable");
+  if(r){
+    const points=r.high-r.low,adr=e.adr14.value;
+    add("range","Range / ADR",points.toFixed(2)+" pts · "+(adr>0?(100*points/adr).toFixed(0)+"% of saved ADR":"ADR unavailable"),
+      "ADR respected "+pct(e.adr14.respected)+" · ATR respected "+pct(e.atr14.respected),geometry(r,open,stop),25,
+      {detail:"Saved 14-day ADR reference: "+adr+" points, as of "+e.asOf+". ATR history is separate; no current ATR14 projection or price target is inferred."});
+  }else add("range","Range / ADR","Waiting for RTH","No current RTH range");
+  const mid=e.middayOrb?.close||{};
+  rangeCondition("midday","14–15 ET ORB",at(14),at(15),"5m-close: one side "+pct(mid.oneSidePct)+" · both "+pct(mid.doublePct)+" · neither "+pct(mid.noBreakPct),70);
+  const midday=items.find(x=>x.key==="midday");
+  midday.detail="Range 14:00–15:00 ET (11 AM–noon PT); observe 15:00–16:00 ET. Report sample: "+(e.middayOrb?.sample||"unavailable")+" sessions.";
+  const lastCompleted=rows.at(-1)?.t||null;
+  const collectorStale=!lastCompleted||now.toMillis()-Date.parse(lastCompleted)>600000;
+  const expectedStop=stop.set({minute:Math.floor(stop.minute/5)*5,second:0,millisecond:0});
+  const rthCoverage=now<open?null:complete(open,expectedStop);
+  const stale=now.diff(DateTime.fromISO(e.asOf,{zone:"America/New_York"}),"days").days>10;
+  return {version:1,lastCompleted,collectorStale,rthCoverage,sessionDate:day.toISODate(),phase:now<open?"PRE-RTH":now>=close?"RTH COMPLETE":"RTH",items,
+    source:"Edgeful",ticker:root,asOf:e.asOf,lookback:EDGEFUL_12M.lookback,baselineSessions:e.sample,stale,
+    note:"Historical frequencies, not trade win rates. Collector prices; completed 5m bars. Separate from live /10 score."};
+}
 
-  if(now>=day.set({hour:7,minute:30})){
-    const ibRows=between(bars5m||[],rthStart,day.set({hour:7,minute:30}));
-    if(ibRows.length){
-      const z=summary(ibRows),after=between(bars5m||[],day.set({hour:7,minute:30}),now<rthEnd?now:rthEnd);
-      const up=after.some(b=>+b.c>z.high),down=after.some(b=>+b.c<z.low);
-      const state=up&&down?"double break":up?"high broken":down?"low broken":"no close break yet";
-      items.push({
-        key:"ib60",label:"60m Initial Balance",
-        text:state+" · historical single break "+e.ib60.single.toFixed(1)+"% · both "+e.ib60.double.toFixed(1)+"%",
-        sample:e.sample,applicable:true
-      });
-    }
-  }
-
-  if(rthRows.length){
-    const rh=Math.max(...rthRows.map(b=>+b.h)),rl=Math.min(...rthRows.map(b=>+b.l));
-    const pdh=(levels||[]).find(x=>x.id==="pdh"),pdl=(levels||[]).find(x=>x.id==="pdl");
-    if(pdh&&rh>+pdh.price){
-      items.push({key:"pdh",label:"Previous-day high",text:"PDH broken · historically closes green "+e.prevDay.highFollowGreen.toFixed(1)+"% of PDH-break sessions",sample:Math.round(e.sample*e.prevDay.highBreak/100),applicable:true});
-    }
-    if(pdl&&rl<+pdl.price){
-      items.push({key:"pdl",label:"Previous-day low",text:"PDL broken · historically closes red "+e.prevDay.lowFollowRed.toFixed(1)+"% of PDL-break sessions",sample:Math.round(e.sample*e.prevDay.lowBreak/100),applicable:true});
-    }
-
-    const range=Math.max(0,rh-rl),adr=e.adr14.value;
-    items.push({
-      key:"range",label:"RTH range / ADR",
-      text:range.toFixed(2)+" pts = "+(adr?range/adr*100:0).toFixed(0)+"% of Edgeful 14d ADR reference "+adr.toFixed(2)+" · ATR respected "+e.atr14.respected.toFixed(1)+"%",
-      sample:e.sample,applicable:true
-    });
-  }
-
-  const rthGap=(gaps||[]).find(g=>g.kind==="RTH"&&!g.filled);
-  if(rthGap){
-    const pct=rthGap.direction==="UP"?e.gapFill.up:e.gapFill.down;
-    items.push({
-      key:"gap",label:"RTH gap",
-      text:(rthGap.direction==="UP"?"Gap up":"Gap down")+" · 100% fill frequency "+pct.toFixed(1)+"%",
-      sample:e.sample,applicable:true
-    });
-  }
-
-  if(middayOrb?.formed){
-    const close=middayOrb.stats?.close||{};
-    items.push({
-      key:"midday",label:"11–12 PT ORB",
-      text:"5m-close one-side "+Number(close.oneSidePct||0).toFixed(1)+"% · double "+Number(close.doublePct||0).toFixed(1)+"%",
-      sample:middayOrb.stats?.sampleSize||248,applicable:true
-    });
-  }
-
+function buildEdgefulContext({bars5m}){
+  const chart=buildEdgefulChartContext(bars5m);
+  const e=EDGEFUL_12M[chart.ticker]||{};
   return {
-    source:EDGEFUL_12M.source||"Edgeful",ticker:root,lookback:EDGEFUL_12M.lookback||"12mo",asOf:e.asOf,refreshedOn:EDGEFUL_12M.refreshedOn||null,
-    items:items.filter(x=>x.applicable).slice(-6),
-    excluded:[{key:"londonNy",reason:e.londonNy.note}],
-    note:"Historical conditional frequencies only; not current-trade probabilities and not included in the 0–10 score unless explicitly stated."
+    chart,source:chart.source||"Edgeful",ticker:chart.ticker,lookback:chart.lookback,
+    asOf:chart.asOf,refreshedOn:EDGEFUL_12M.refreshedOn||null,
+    items:chart.items.map(x=>({key:x.key,label:x.label,text:x.state+" · "+x.stat,applicable:Boolean(x.geometry)})),
+    excluded:[{key:"londonNy",reason:e.londonNy?.note||"Excluded"}],
+    note:"Historical conditional frequencies only; not current-trade probabilities and never included in the 0–10 live score."
   };
 }
 
