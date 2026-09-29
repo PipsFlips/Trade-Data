@@ -983,7 +983,7 @@ function buildMarketAnalysis({currentPrice,levels,f1,f5,signal,traps,orderBlocks
   const pdh=(levels||[]).find(x=>x.id==="pdh"),pdl=(levels||[]).find(x=>x.id==="pdl");
   const rangeBreak=(end,high,low,stop=rthEnd)=>{
     if(!end||!Number.isFinite(+high)||!Number.isFinite(+low)) return {up:false,down:false};
-    const endMs=Date.parse(end),stopMs=stop?.toMillis?.()??Date.parse(stop);
+    const endMs=end?.toMillis?.()??Date.parse(end),stopMs=stop?.toMillis?.()??Date.parse(stop);
     const after=closedBars.filter(b=>Date.parse(b.t)>=endMs&&(!Number.isFinite(stopMs)||Date.parse(b.t)<stopMs));
     return {up:after.some(b=>+b.c>+high),down:after.some(b=>+b.c<+low)};
   };
