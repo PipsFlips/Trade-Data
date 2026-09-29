@@ -1,0 +1,123 @@
+{
+  "source": "Edgeful",
+  "lookback": "12mo",
+  "refreshedOn": "2026-09-28",
+  "NQ": {
+    "asOf": "2026-09-25",
+    "sample": 257,
+    "overnight": {
+      "anyBreak": 89.5,
+      "oneSide": 73.9,
+      "double": 15.6,
+      "noBreak": 10.5
+    },
+    "ib60": {
+      "single": 81.7,
+      "double": 9.7,
+      "neither": 8.6
+    },
+    "prevDay": {
+      "highBreak": 58,
+      "highFollowGreen": 80,
+      "lowBreak": 44,
+      "lowFollowRed": 79
+    },
+    "gapFill": {
+      "up": 52,
+      "down": 58
+    },
+    "opening15": {
+      "greenToGreen": 65.2,
+      "redToRed": 55.5
+    },
+    "orb15": {
+      "oneSide": 63.8,
+      "double": 35.8,
+      "noBreak": 0.4
+    },
+    "atr14": {
+      "respected": 69.6,
+      "exceeded": 30.4
+    },
+    "adr14": {
+      "value": 316.16,
+      "respected": 55.6,
+      "exceeded": 44.4
+    },
+    "middayOrb": {
+      "sample": 248,
+      "wick": {
+        "oneSidePct": 76.6,
+        "doublePct": 12.9,
+        "noBreakPct": 10.5
+      },
+      "close": {
+        "oneSidePct": 73,
+        "doublePct": 4,
+        "noBreakPct": 23
+      }
+    },
+    "londonNy": {
+      "note": "near 50/50; excluded from scoring"
+    }
+  },
+  "ES": {
+    "asOf": "2026-09-25",
+    "sample": 257,
+    "overnight": {
+      "anyBreak": 93,
+      "oneSide": 73.9,
+      "double": 19.1,
+      "noBreak": 7
+    },
+    "ib60": {
+      "single": 79.8,
+      "double": 15.2,
+      "neither": 5.1
+    },
+    "prevDay": {
+      "highBreak": 56,
+      "highFollowGreen": 78,
+      "lowBreak": 46,
+      "lowFollowRed": 80
+    },
+    "gapFill": {
+      "up": 60,
+      "down": 56
+    },
+    "opening15": {
+      "greenToGreen": 61.3,
+      "redToRed": 55.8
+    },
+    "orb15": {
+      "oneSide": 59.1,
+      "double": 40.5,
+      "noBreak": 0.4
+    },
+    "atr14": {
+      "respected": 68.1,
+      "exceeded": 31.9
+    },
+    "adr14": {
+      "value": 53.57,
+      "respected": 55.6,
+      "exceeded": 44.4
+    },
+    "middayOrb": {
+      "sample": 248,
+      "wick": {
+        "oneSidePct": 73.8,
+        "doublePct": 14.1,
+        "noBreakPct": 12.1
+      },
+      "close": {
+        "oneSidePct": 67.7,
+        "doublePct": 6.5,
+        "noBreakPct": 25.8
+      }
+    },
+    "londonNy": {
+      "note": "near 50/50; excluded from scoring"
+    }
+  }
+}
