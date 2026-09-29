@@ -155,15 +155,15 @@ canvas{display:block;width:100%;height:410px;border-radius:8px;background:#0d131
       <button class="layerbtn" data-layer="sessions">Sessions</button>
       <button class="layerbtn" data-layer="prior">Prior H/L</button>
       <button class="layerbtn" data-layer="profiles">Profiles</button>
-      <button class="layerbtn" data-layer="pivots">1H pivots</button>
+      <button class="layerbtn" data-layer="pivots">4H pivots</button>
       <button class="layerbtn" data-layer="ob">15m OB</button>
       <button class="layerbtn" data-layer="orb">ORB</button>
       <button class="layerbtn" data-layer="middayOrb">11-12 ORB</button>
-      <button class="layerbtn" data-layer="vwap">VWAP</button>
+      <button class="layerbtn active" data-layer="vwap">VWAP</button>
       <button class="layerbtn" data-layer="traps">Traps</button>
       <button class="layerbtn" data-layer="absorption">Absorption</button>
       <button class="layerbtn" data-layer="liquidity">Liquidity</button>
-      <button class="layerbtn" data-layer="structure">Structure</button>
+      <button class="layerbtn active" data-layer="structure">Structure</button>
       <button class="layerbtn" data-layer="edgeful">Edgeful</button>
     </div>
     <section id="edgeChart" class="edgeChart" aria-label="Edgeful chart context"></section>
@@ -272,9 +272,9 @@ canvas{display:block;width:100%;height:410px;border-radius:8px;background:#0d131
         </div>
       </details>
       <details>
-        <summary>1H pivot levels</summary>
+        <summary>4H pivot levels</summary>
         <div class="legendBody">
-          A 1-hour pivot is a local swing high or swing low detected against the two hourly bars on each side. Untouched pivots receive more weight. The significance score also considers later excursion, distance from current price, and age. Only the stronger unswept pivots are promoted to chart levels.
+          A 4-hour pivot is a local swing high or swing low built from completed CME-session-aligned 4H candles. The 4H windows are 18:00–22:00, 22:00–02:00, 02:00–06:00, 06:00–10:00, 10:00–14:00 ET, plus the shortened 14:00–17:00 ET pre-maintenance candle. A pivot requires two completed 4H candles on each side for confirmation. Untouched pivots receive more weight; significance also considers later excursion, distance from current price, and age.
         </div>
       </details>
       <details>
@@ -400,7 +400,7 @@ canvas{display:block;width:100%;height:410px;border-radius:8px;background:#0d131
       <details>
         <summary>Colors and chart toggles</summary>
         <div class="legendBody">
-          Green generally marks support/buy-side references; red marks resistance/sell-side references; Asia levels are yellow; London levels are blue; weekly levels are white; previous POC is dark red. The chart buttons can independently hide/show Sessions, Prior H/L, Profiles, 1H pivots, 15m OB, ORB, VWAP, and Traps. Hidden session layers are also removed from chart autoscaling so they do not compress the candles.
+          Green generally marks support/buy-side references; red marks resistance/sell-side references; Asia levels are yellow; London levels are blue; weekly levels are white; previous POC is dark red. The chart buttons can independently hide/show Sessions, Prior H/L, Profiles, 4H pivots, 15m OB, ORB, VWAP, and Traps. Hidden session layers are also removed from chart autoscaling so they do not compress the candles.
         </div>
       </details>
     </div>
@@ -462,7 +462,7 @@ const levelColor=l=>{
 let chartBarCount=48;
 let chartMode="intraday";
 let lastData=null;
-const defaultChartLayers={sessions:false,prior:false,profiles:false,pivots:false,ob:false,orb:false,middayOrb:false,vwap:false,traps:false,absorption:false,liquidity:false,structure:false,edgeful:false};
+const defaultChartLayers={sessions:false,prior:false,profiles:false,pivots:false,ob:false,orb:false,middayOrb:false,vwap:true,traps:false,absorption:false,liquidity:false,structure:true,edgeful:false};
 let chartLayers={...defaultChartLayers};
 const layerForLevel=l=>{
   const id=String(l?.id||"");

@@ -56,4 +56,10 @@ test('browser script parses and session labels match canonical ET windows',()=>{
   for(const script of html.matchAll(/<script[^>]*>([\s\S]*?)<\/script>/g)) new vm.Script(script[1]);
   for(const label of ['Asia 20:00 ET','London 03:00 ET','NY 09:30 ET','03:00–08:30 ET']) assert.ok(html.includes(label));
   assert.ok(!html.includes('05:20 PT'));
+  assert.ok(html.includes('data-layer="pivots">4H pivots</button>'));
+  assert.ok(html.includes('data-layer="vwap">VWAP</button>'));
+  assert.ok(html.includes('data-layer="structure">Structure</button>'));
+  assert.ok(html.includes('vwap:true'));
+  assert.ok(html.includes('structure:true'));
+  assert.ok(!html.includes('data-layer="pivots">1H pivots</button>'));
 });

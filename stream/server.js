@@ -322,6 +322,38 @@ function previousCMEWeek(rows) {
   return z;
 }
 
+function aggregateFourHourBars(hour){
+  const groups=new Map();
+  for(const b of hour||[]){
+    const t=DateTime.fromISO(b.t,{setZone:true}).setZone("America/New_York");
+    if(!t.isValid) continue;
+    const anchor=(t.hour>=18?t:t.minus({days:1})).startOf("day").set({hour:18,minute:0,second:0,millisecond:0});
+    const elapsed=t.toMillis()-anchor.toMillis();
+    if(elapsed<0) continue;
+    const slot=Math.floor(elapsed/(4*3600000));
+    if(slot<0||slot>5) continue;
+    const start=anchor.plus({hours:slot*4});
+    const key=start.toUTC().toISO();
+    let x=groups.get(key);
+    if(!x){
+      x={t:key,o:+b.o,h:+b.h,l:+b.l,c:+b.c,v:+b.v||0,_times:new Set()};
+      groups.set(key,x);
+    }else{
+      x.h=Math.max(x.h,+b.h); x.l=Math.min(x.l,+b.l); x.c=+b.c; x.v+=(+b.v||0);
+    }
+    x._times.add(t.toUTC().toMillis());
+  }
+  const now=DateTime.now().setZone("America/New_York");
+  return [...groups.values()].filter(x=>{
+    const start=DateTime.fromISO(x.t,{setZone:true}).setZone("America/New_York");
+    const shortened=start.hour===14;
+    const expected=shortened?3:4;
+    const end=start.plus({hours:shortened?3:4});
+    return x._times.size>=expected&&now>=end;
+  }).map(x=>({t:x.t,o:x.o,h:x.h,l:x.l,c:x.c,v:x.v}))
+    .sort((a,b)=>Date.parse(a.t)-Date.parse(b.t));
+}
+
 function scoredPivots(hour,current,a14) {
   const raw=[], ref=a14||300;
   for(let i=2;i<hour.length-2;i++){
@@ -1924,8 +1956,8 @@ function buildIndicatorPayload() {
     {id:"onVah",label:"ON VAH",price:p.currentOvernight_estimated?.vah,kind:"profile",priority:84},
     {id:"onPoc",label:"ON POC",price:p.currentOvernight_estimated?.poc,kind:"profile",priority:86},
     {id:"onVal",label:"ON VAL",price:p.currentOvernight_estimated?.val,kind:"profile",priority:84},
-    ...((a.oneHourPivots||[]).filter(x=>!x.sweptLater).slice(0,6).map((x,i)=>({
-      id:"pivot"+i,label:`1H ${x.type==="high"?"H":"L"} ${x.significanceScore}`,price:x.price,
+    ...((a.fourHourPivots||[]).filter(x=>!x.sweptLater).slice(0,6).map((x,i)=>({
+      id:"pivot"+i,label:`4H ${x.type==="high"?"H":"L"} ${x.significanceScore}`,price:x.price,
       kind:x.type==="high"?"resistance":"support",priority:70-i
     })))
   ],tick);
@@ -2175,6 +2207,7 @@ function buildIndicatorPayload() {
     },
     bars5m:liveBars5m.slice(-400),
     bars1h:(latestSnapshot.bars?.oneHourRecent||[]).slice(-240),
+    bars4h:(latestSnapshot.bars?.fourHourRecent||[]).slice(-120),
     bars1d:(latestSnapshot.bars?.dailyRecent||[]).slice(-60)
   };
 }
@@ -2190,6 +2223,7 @@ async function buildSnapshot() {
     bars(5,1,1800,600)
   ]);
 
+  const four=aggregateFourHourBars(hour);
   const tick=+contract.tickSize||0.25;
   const current=+five.at(-1).c;
   const a14=atr(day,14);
@@ -2234,6 +2268,7 @@ async function buildSnapshot() {
       bar1m:one.at(-1)||null,
       bar5m:five.at(-1)||null,
       bar1h:hour.at(-1)||null,
+      bar4h:four.at(-1)||null,
       bar1d:day.at(-1)||null,
       quote:latestQuote
     },
@@ -2259,6 +2294,7 @@ async function buildSnapshot() {
         currentGlobex_exact:finalizeProfile(profiles[profileKey("globex",currentSession)])
       },
 
+      fourHourPivots:scoredPivots(four,current,a14),
       oneHourPivots:scoredPivots(hour,current,a14),
 
       volatility:{
@@ -2273,6 +2309,7 @@ async function buildSnapshot() {
       oneMin:one.length,
       fiveMin:five.length,
       oneHour:hour.length,
+      fourHour:four.length,
       daily:day.length,
       weekly:week.length
     },
@@ -2281,6 +2318,7 @@ async function buildSnapshot() {
       oneMinRecent:one.slice(-3000),
       fiveMinRecent:five.slice(-3000),
       oneHourRecent:hour.slice(-1000),
+      fourHourRecent:four.slice(-400),
       dailyRecent:day.slice(-400),
       weeklyRecent:week.slice(-200)
     }
