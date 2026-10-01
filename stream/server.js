@@ -1,6 +1,7 @@
 const express = require("express");
 const { buildIBStrategy } = require("./ib-strategy");
 const { buildORBStrategy } = require("./orb-strategy");
+const { readReport: readHistoryCoverage, runAudit: runHistoryAudit } = require("./history-coverage");
 const signalR = require("@microsoft/signalr");
 const { DateTime } = require("luxon");
 
@@ -88,16 +89,17 @@ async function getToken() {
   if (!token || Date.now() - tokenIssuedAt > 18 * 3600000) await authenticate();
   return token;
 }
-async function post(apiPath, payload, retry=true) {
+async function post(apiPath, payload, retry=true, timeoutMs=null) {
   const t = await getToken();
   const r = await fetch(API_BASE + apiPath, {
     method: "POST",
+    ...(timeoutMs ? {signal:AbortSignal.timeout(timeoutMs)} : {}),
     headers: {"Content-Type":"application/json","Accept":"text/plain","Authorization":`Bearer ${t}`},
     body: JSON.stringify(payload)
   });
   if (r.status === 401 && retry) {
     await authenticate();
-    return post(apiPath, payload, false);
+    return post(apiPath, payload, false, timeoutMs);
   }
   if (!r.ok) throw new Error(`${apiPath} HTTP ${r.status}: ${await r.text()}`);
   return r.json();
@@ -2417,6 +2419,11 @@ async function init() {
   setInterval(()=>saveState(false),STATE_SAVE_MS);
   setInterval(()=>getToken().catch(e=>console.error("token refresh",e)),3600000);
   setInterval(()=>captureMorningCutoffIfDue().catch(e=>console.error("morning cutoff",e)),5000);
+  // One bounded audit per revision, reusing our existing authenticated session.
+  setTimeout(()=>runHistoryAudit({market:MARKET_SYMBOL,live:LIVE,
+    post:(path,payload)=>post(path,payload,true,15000),
+    file:`${DATA_DIR}/history-coverage-${MARKET_SYMBOL}.json`
+  }).catch(()=>console.warn("Historical coverage audit could not complete")),15000);
 }
 
 process.on("SIGTERM",()=>{ try{saveState(true);}finally{process.exit(0);} });
@@ -2484,6 +2491,10 @@ app.get("/indicator",(req,res)=>{
 });
 
 app.get("/snapshot.json",(req,res)=>res.json(latestSnapshot||{}));
+app.get("/history-coverage.json",(req,res)=>{
+  res.set("Cache-Control","no-store");
+  res.json(readHistoryCoverage(`${DATA_DIR}/history-coverage-${MARKET_SYMBOL}.json`)||{market:MARKET_SYMBOL,status:"pending"});
+});
 app.get("/mnq-snapshot.json",(req,res)=>res.json(latestSnapshot||{}));
 
 app.get("/profile.json",(req,res)=>{
