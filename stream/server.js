@@ -1,4 +1,5 @@
 const express = require("express");
+const { buildIBStrategy } = require("./ib-strategy");
 const signalR = require("@microsoft/signalr");
 const { DateTime } = require("luxon");
 
@@ -1628,8 +1629,8 @@ function uniqueLevels(levels,tick=0.25) {
   return out.sort((a,b)=>b.priority-a.priority);
 }
 
-function calculateMarketStructure(bars5m,bars15m,sessionCvd){
-  const closed=(bars5m||[]).filter(b=>Date.parse(b.t)+300000<=Date.now()).slice(-36);
+function calculateMarketStructure(bars5m,bars15m,sessionCvd,asOf=Date.now()){
+  const closed=(bars5m||[]).filter(b=>Date.parse(b.t)+300000<=asOf).slice(-36);
   if(closed.length<12) return {state:"TRANSITION",score:0,direction:"NEUTRAL",reasons:["Waiting for enough completed 5m structure"],range:null,trend:null,metrics:{}};
   const atr=current5mAtr(closed,20)||Math.max(1,median(closed.slice(-12).map(b=>+b.h-+b.l))||1);
   const recent=closed.slice(-18);
@@ -1679,7 +1680,7 @@ function calculateMarketStructure(bars5m,bars15m,sessionCvd){
   if(Number.isFinite(vwNow)) for(let i=1;i<recent.length;i++) if((+recent[i-1].c-vwNow)*(+recent[i].c-vwNow)<0) crosses++;
   const crossScore=Math.min(1,crosses/5);
 
-  const r15=(bars15m||[]).filter(b=>Date.parse(b.t)+900000<=Date.now()).slice(-5);
+  const r15=(bars15m||[]).filter(b=>Date.parse(b.t)+900000<=asOf).slice(-5);
   let dir15="NEUTRAL";
   if(r15.length>=4){const d=+r15.at(-1).c-+r15[0].c;if(Math.abs(d)>=atr*.5)dir15=d>0?"UP":"DOWN";}
   const aligned15=direction!=="NEUTRAL"&&dir15===direction;
@@ -2110,6 +2111,10 @@ function buildIndicatorPayload() {
   const marketStructure=calculateMarketStructure(
     bars5m,bars15m,relayFresh?relayState.currentGlobexCvd:(globexExact?.cvd??null)
   );
+  const ibStrategy=buildIBStrategy({
+    bars:bars5m.slice(-500),market:MARKET_SYMBOL,fresh:Boolean(relayFresh),currentPrice,
+    structureAt:(closed,asOf)=>calculateMarketStructure(closed,aggregateBars(closed,15),null,asOf).state
+  });
   const absorptionZones=relayFresh?calculateAbsorptionZones({f1,bars5m,currentPrice,levels}):[];
   const closePressure=calculateClosePressure({
     f1,bars5m,currentPrice,rthVwap,
@@ -2190,6 +2195,7 @@ function buildIndicatorPayload() {
     signal,
     analysis,
     marketStructure,
+    ibStrategy,
     closePressure,
     volatility:{atr5m20:current5mAtr(liveBars5m,20),atr14Daily:latestSnapshot.analytics?.volatility?.ATR14Daily??null},
     diagnostics:{tradeEventsReceived,tradeEventsMatched,quoteEventsReceived,depthEventsReceived,lastRawTradeEvent,lastRawQuoteEvent,lastRawDepthEvent,reconnectCount,subscriptionResults,relayFresh:Boolean(relayFresh),relayReceivedAt:relayState?.receivedAt||null,lastTradeAt:relayState?.lastTradeAt||lastTradeAt||null,lastTradeReceivedAt:relayState?.lastTradeReceivedAt||null,lastQuoteReceivedAt:relayState?.lastQuoteReceivedAt||null,lastDepthReceivedAt:relayState?.lastDepthReceivedAt||null,alertScoreThreshold:ALERT_SCORE_THRESHOLD,smsConfigured:Boolean(ALERT_SMS_TO&&TWILIO_ACCOUNT_SID&&TWILIO_AUTH_TOKEN&&TWILIO_FROM_NUMBER)},

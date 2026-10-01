@@ -99,6 +99,8 @@ canvas{display:block;width:100%;height:410px;border-radius:8px;background:#0d131
 .edgeDetail,.edgeMeta,.edgeCaution{font-size:10px;line-height:1.5;color:#9aa8bb;margin-top:5px}
 .edgeMeta{padding-top:6px;border-top:1px solid #303047}
 .edgeNotes{margin-top:7px}.edgeNotes summary{font-size:10px;color:#9aa8bb;cursor:pointer}
+
+.ibHeading,.ibFooter{display:flex;align-items:center;justify-content:space-between;gap:10px}.ibHeading h2{margin:0;font-size:15px}.ibHeading span,.ibFooter span{font-size:11px;color:var(--muted)}.ibState{font-size:20px;font-weight:850;margin-top:10px}.ibReason{font-size:12px;line-height:1.5;color:#c9d2dc;margin:6px 0 12px}.ibFacts,.ibPlan{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:6px}.ibFact{background:var(--panel2);border-radius:8px;padding:8px;min-width:0}.ibFact small{display:block;font-size:9px;text-transform:uppercase;color:var(--muted);margin-bottom:4px}.ibFact b{font-size:12px;overflow-wrap:anywhere}.ibPlan{border-top:1px solid var(--line);padding-top:10px;margin-top:10px}.ibPlan[hidden]{display:none}.ibFooter{margin-top:12px}.ibNote,.ibRules{color:var(--muted);font-size:10px;line-height:1.5;margin-top:9px}.ibRules summary{cursor:pointer}.advancedBody{padding:9px}.advancedBody .signal{margin-bottom:9px;text-align:left}.advancedBody .grid{margin-top:9px}.winbtn:disabled{opacity:.4;cursor:not-allowed}@media(max-width:480px){.ibFacts,.ibPlan{grid-template-columns:repeat(2,minmax(0,1fr))}.ibState{font-size:17px}.ibHeading span{font-size:9px}}
 </style>
 </head>
 <body>
@@ -114,27 +116,19 @@ canvas{display:block;width:100%;height:410px;border-radius:8px;background:#0d131
       <div class="sub"><span id="contract">MNQ</span> · <span id="stamp">waiting for data</span></div>
       <div class="flowFresh stale" id="flowFresh"><span class="fdot"></span><span id="flowFreshText">ORDER FLOW WAITING</span></div>
     </div>
-    <div class="signal">
-      <div class="s neutral" id="signal">NEUTRAL</div>
-      <div class="score" id="score">0.0/10</div>
-    </div>
+
   </div>
 
-  <div class="grid">
-    <div class="card"><div class="k">1m Δ</div><div class="v" id="delta1">—</div></div>
-    <div class="card"><div class="k">5m Δ</div><div class="v" id="delta5">—</div></div>
-    <div class="card"><div class="k">Raw Session CVD</div><div class="v" id="sessionCvd">—</div></div>
-    <div class="card"><div class="k">Raw NY CVD</div><div class="v" id="cvd">—</div></div>
-  </div>
-
-  <div class="closePressureBox" id="closePressureBox">
-    <div class="closePressureHead">
-      <div class="closePressureTitle">Close Pressure</div>
-      <div class="closePressureState balanced" id="closePressureState">BALANCED · 0.0/10</div>
-    </div>
-    <div class="closePressureMeta" id="closePressureMeta"></div>
-    <div class="closePressureNote">12:30–1:00 PM PT only · collector-derived proxy, not exchange MOC imbalance.</div>
-  </div>
+  <section class="section ibPanel" id="ibStrategyPanel" aria-label="IB Strategy">
+    <div class="ibHeading"><h2>IB Strategy</h2><span id="ibClock">10:30–11:30 ET</span></div>
+    <div class="ibState neutral" id="ibState" role="status">WAIT — COLLECTOR DATA</div>
+    <p class="ibReason" id="ibReason">MNQ · first 60-minute IB break &amp; retest</p>
+    <div class="ibFacts" id="ibFacts"></div>
+    <div class="ibPlan" id="ibPlan" hidden></div>
+    <div class="ibFooter"><span id="ibDaily">0 of 1 trades marked taken</span><button class="winbtn" id="ibMarkTaken" type="button" disabled>Mark trade taken</button></div>
+    <div class="ibNote">MNQ only · $100 planned risk maximum · 5 contracts maximum · 20-point stop maximum · 1.5R target · one trade per day. Cancel unfilled entries at 11:30 ET.</div>
+    <details class="ibRules"><summary>Setup rules &amp; tracking</summary><p>IB forms 09:30–10:30 ET. Eligible size: 0.60% to below 0.90%. Require a completed 5-minute breakout close aligned with NY VWAP and TREND UP/DOWN structure. Wait for the first IB-boundary touch, then a rejection close outside the IB; no close more than 25% inside the range. Entry is one tick beyond confirmation high/low; stop is two points beyond the retest extreme. No opposite-side retry or re-entry. Targets round outward to the nearest tick, at least 1.5R.</p><p>NY VWAP for the historical candle checks is calculated from collector OHLCV bars. This rule set has not been backtested for expectancy. Dollar amounts exclude commissions and slippage. Price touches are not verified fills. Trade status is your manual record in this browser, with no broker connection or account-level lockout.</p></details>
+  </section>
 
   <div class="chartCard">
     <div class="chartHead">
@@ -151,13 +145,20 @@ canvas{display:block;width:100%;height:410px;border-radius:8px;background:#0d131
       <button class="winbtn" data-mode="1w">1W</button>
       <button class="winbtn" data-mode="1m">1M</button>
     </div>
-    <div id="layerControls" style="display:flex;gap:4px;margin:0 0 7px 0;flex-wrap:wrap">
+    <canvas id="chart"></canvas>
+  </div>
+
+  <details class="section collapsibleSection" id="advancedIndicators">
+    <summary class="collapsibleSectionSummary">Advanced Indicators &amp; Market Analysis</summary>
+    <div class="advancedBody">
+      <details class="section collapsibleSection"><summary class="collapsibleSectionSummary">Chart overlays — 15m ORB, 15m OB &amp; levels</summary>
+      <div class="advancedBody">    <div id="layerControls" style="display:flex;gap:4px;margin:0 0 7px 0;flex-wrap:wrap">
       <button class="layerbtn" data-layer="sessions">Sessions</button>
       <button class="layerbtn" data-layer="prior">Prior H/L</button>
       <button class="layerbtn" data-layer="profiles">Profiles</button>
       <button class="layerbtn" data-layer="pivots">4H pivots</button>
       <button class="layerbtn" data-layer="ob">15m OB</button>
-      <button class="layerbtn" data-layer="orb">ORB</button>
+      <button class="layerbtn" data-layer="orb">15m ORB</button>
       <button class="layerbtn" data-layer="middayOrb">11-12 ORB</button>
       <button class="layerbtn active" data-layer="vwap">VWAP</button>
       <button class="layerbtn" data-layer="traps">Traps</button>
@@ -167,9 +168,27 @@ canvas{display:block;width:100%;height:410px;border-radius:8px;background:#0d131
       <button class="layerbtn" data-layer="edgeful">Edgeful</button>
     </div>
     <section id="edgeChart" class="edgeChart" aria-label="Edgeful chart context"></section>
-    <canvas id="chart"></canvas>
+</div></details>
+      <details class="section collapsibleSection"><summary class="collapsibleSectionSummary">Order flow &amp; pressure</summary><div class="advancedBody">    <div class="signal">
+      <div class="s neutral" id="signal">NEUTRAL</div>
+      <div class="score" id="score">0.0/10</div>
+    </div>  <div class="grid">
+    <div class="card"><div class="k">1m Δ</div><div class="v" id="delta1">—</div></div>
+    <div class="card"><div class="k">5m Δ</div><div class="v" id="delta5">—</div></div>
+    <div class="card"><div class="k">Raw Session CVD</div><div class="v" id="sessionCvd">—</div></div>
+    <div class="card"><div class="k">Raw NY CVD</div><div class="v" id="cvd">—</div></div>
   </div>
 
+  <div class="closePressureBox" id="closePressureBox">
+    <div class="closePressureHead">
+      <div class="closePressureTitle">Close Pressure</div>
+      <div class="closePressureState balanced" id="closePressureState">BALANCED · 0.0/10</div>
+    </div>
+    <div class="closePressureMeta" id="closePressureMeta"></div>
+    <div class="closePressureNote">12:30–1:00 PM PT only · collector-derived proxy, not exchange MOC imbalance.</div>
+  </div>
+
+</div></details>
   <details class="section collapsibleSection" id="marketStructureBox">
     <summary class="collapsibleSectionSummary"><span>Market Structure</span><span class="structureState transition" id="structureState">TRANSITION · 0.0/10</span></summary>
     <div style="padding:0 9px 9px">
@@ -179,7 +198,7 @@ canvas{display:block;width:100%;height:410px;border-radius:8px;background:#0d131
   </details>
 
   <details class="section collapsibleSection" id="analysisBox">
-    <summary class="collapsibleSectionSummary"><span>Live market analysis</span><span class="biasPill neutral" id="biasPill">NEUTRAL</span></summary>
+    <summary class="collapsibleSectionSummary"><span>Live market context</span><span class="biasPill neutral" id="biasPill">NEUTRAL</span></summary>
     <div style="padding:0 9px 9px">
       <div class="analysisWhy" id="analysisWhy">Waiting for enough live data.</div>
       <div class="setups" id="setups"></div>
@@ -406,6 +425,8 @@ canvas{display:block;width:100%;height:410px;border-radius:8px;background:#0d131
     </div>
   </details>
 
+    </div>
+  </details>
   <div class="status" id="status">Connecting…</div>
   <div class="viewerCount" id="viewerCount">Viewers: —</div>
 </div>
@@ -633,6 +654,23 @@ function drawChart(data){
   const cw=w-left-right,ch=h-top-bottom;
   const y=p=>top+(max-p)/(max-min)*ch;
   const x=i=>left+(i+.5)*cw/bars.length;
+
+  // IB boundaries stay on the execution chart; optional 15m ORB remains independent.
+  const ib=data.ibStrategy;
+  if(activeMarket==='MNQ'&&barKind==='5m'&&ib&&Number.isFinite(ib.high)&&Number.isFinite(ib.low)){
+    const start=bars.findIndex(b=>{
+      const date=new Date(b.t).toLocaleDateString('en-CA',{timeZone:'America/New_York'});
+      return date===ib.date&&etSessionMinutes(Date.parse(b.t))>=570;
+    });
+    if(start>=0){
+      for(const [price,label,col] of [[ib.high,'IB H','#57a4ff'],[ib.low,'IB L','#b7a1f7']]){
+        if(price<min||price>max)continue;
+        ctx.save();ctx.strokeStyle=col;ctx.lineWidth=1;ctx.setLineDash([4,4]);
+        ctx.beginPath();ctx.moveTo(x(start),y(price));ctx.lineTo(w-right,y(price));ctx.stroke();
+        ctx.font='bold 9px sans-serif';ctx.textAlign='right';ctx.fillStyle=col;ctx.fillText(label+' '+fmt(price),w-right-4,y(price)-5);ctx.restore();
+      }
+    }
+  }
 
   ctx.strokeStyle="#1d2733";ctx.lineWidth=1;
   ctx.font="10px -apple-system,BlinkMacSystemFont,Segoe UI,Arial";
@@ -1059,7 +1097,7 @@ function renderClosePressure(data){
   box.style.display="block";
   const state=cp.state||"BALANCED",score=Number.isFinite(+cp.score)?(+cp.score).toFixed(1):"0.0";
   const el=document.getElementById("closePressureState");
-  el.textContent=state+" · "+score+"/10";
+  el.textContent=(state==="BUY"?"BUYER PRESSURE":state==="SELL"?"SELLER PRESSURE":state)+" · "+score+"/10";
   el.className="closePressureState "+(state==="BUY"?"buy":state==="SELL"?"sell":"balanced");
   const delta=Number.isFinite(+cp.delta30)?((+cp.delta30>0?"+":"")+nfmt(cp.delta30)+" Δ30m"):"";
   document.getElementById("closePressureMeta").textContent=[delta,(cp.reasons||[]).join(" · ")].filter(Boolean).join(" · ")||"Waiting for enough closing-window order flow.";
@@ -1093,6 +1131,47 @@ function renderEdgefulContext(data){
     (excluded.length?" · London→NY correlation excluded: "+excluded[0]:"");
 }
 
+let ibCurrent=null,ibMarkedDate=null,ibStorageAvailable=true;
+function ibFact(label,value){return '<div class="ibFact"><small>'+label+'</small><b>'+value+'</b></div>';}
+function renderIBStrategy(data){
+  const s=data.ibStrategy;
+  ibCurrent=s||null;
+  const button=document.getElementById('ibMarkTaken');
+  const state=document.getElementById('ibState'),planEl=document.getElementById('ibPlan');
+  if(!s){state.textContent='UNAVAILABLE — STRATEGY DATA';planEl.hidden=true;button.disabled=true;return;}
+  let marked=ibMarkedDate===s.date;
+  try{marked=marked||localStorage.getItem('pipsflipsIBTrade:'+s.date)==='taken';}catch{ibStorageAvailable=false;}
+  const disabledMarket=activeMarket!=='MNQ';
+  state.textContent=marked&&!disabledMarket?'DONE FOR DAY — TRADE MARKED TAKEN':s.state;
+  state.className='ibState '+(!marked&&s.state==='LONG ENTRY'?'buy':!marked&&s.state==='SHORT ENTRY'?'sell':'neutral');
+  document.getElementById('ibReason').textContent=marked&&!disabledMarket?'One trade recorded today. No new entry. Manage any open position with its existing bracket.':s.reason;
+  document.getElementById('ibClock').textContent=s.cutoffMinutes>0?s.cutoffMinutes+' min to 11:30 ET':'Entry window closed · ET';
+  document.getElementById('ibFacts').innerHTML=[
+    ibFact('IB high',s.high===null?'—':fmt(s.high)),ibFact('IB low',s.low===null?'—':fmt(s.low)),
+    ibFact('IB size',s.sizePct===null?'—':s.sizePct.toFixed(3)+'% · '+(s.eligible?'eligible':'not eligible')),
+    ibFact('NY VWAP · bar estimate',s.vwap===null?'—':fmt(s.vwap)),ibFact('Structure at last check',s.structure||'—'),
+    ibFact('Break / retest / close',[s.breakout,s.retest,s.confirmation].map(x=>x?'✓':'—').join(' / '))
+  ].join('');
+  const p=s.plan;
+  planEl.hidden=!p||disabledMarket;
+  planEl.innerHTML=p?[
+    ibFact('Stop-entry · '+p.side,fmt(p.entry)),ibFact('Stop',fmt(p.stop)),ibFact('Target',fmt(p.target)),
+    ibFact('Size',p.contracts+' MNQ'),ibFact('Stop distance',fmt(p.distance)+' points'),ibFact('Planned risk','$'+fmt(p.risk)),
+    ibFact('Planned reward','$'+fmt(p.reward)),ibFact('Reward / risk',p.rr.toFixed(2)+'R'),ibFact('Confirmation · ET',new Date(p.confirmedAt).toLocaleTimeString('en-US',{timeZone:'America/New_York',hour:'2-digit',minute:'2-digit'}))
+  ].join(''):'';
+  document.getElementById('ibDaily').textContent=(marked?'1':'0')+' of 1 trades marked taken'+(ibStorageAvailable?'':' · reload persistence unavailable');
+  button.disabled=marked||disabledMarket;
+}
+document.getElementById('ibMarkTaken').addEventListener('click',()=>{
+  if(!ibCurrent||activeMarket!=='MNQ')return;
+  ibMarkedDate=ibCurrent.date;
+  try{localStorage.setItem('pipsflipsIBTrade:'+ibCurrent.date,'taken');}catch{ibStorageAvailable=false;}
+  renderIBStrategy({ibStrategy:ibCurrent});
+});
+window.addEventListener('storage',e=>{
+  if(e.key?.startsWith('pipsflipsIBTrade:')&&ibCurrent)renderIBStrategy({ibStrategy:ibCurrent});
+});
+
 function renderAnalysis(data){
   const a=data.analysis||{};
   const pill=document.getElementById("biasPill");
@@ -1103,8 +1182,9 @@ function renderAnalysis(data){
   const el=document.getElementById("setups");
   const rows=(a.setups||[]).slice(0,3);
   el.innerHTML=rows.map(x=>{
-    const side=x.side||"WATCH";
-    const cls=side==="BUY"?"buy":side==="SELL"?"sell":"neutral";
+    const rawSide=x.side||"WATCH";
+    const side=rawSide==="BUY"?"BULLISH CONTEXT":rawSide==="SELL"?"BEARISH CONTEXT":"WATCH";
+    const cls=rawSide==="BUY"?"buy":rawSide==="SELL"?"sell":"neutral";
     const q=Number.isFinite(+x.quality)?" · "+(+x.quality/10).toFixed(1)+"/10":"";
     return '<div class="setup">'+
       '<div class="setupTitle"><span>'+x.title+'</span><span class="setupSide '+cls+'">'+side+q+'</span></div>'+
@@ -1123,10 +1203,12 @@ function renderAnalysis(data){
 async function refresh(){
   const status=document.getElementById("status");
   try{
-    const endpoint=activeMarket==="MES"?"/mes-indicator.json":"/indicator.json";
+    const requestedMarket=activeMarket;
+    const endpoint=requestedMarket==="MES"?"/mes-indicator.json":"/indicator.json";
     const r=await fetch(endpoint,{cache:"no-store"});
     if(!r.ok) throw new Error("HTTP "+r.status);
     const d=await r.json();
+    if(requestedMarket!==activeMarket)return;
     document.getElementById("price").textContent=fmt(d.currentPrice);
     document.getElementById("contract").textContent=d.contract?.name||activeMarket;
     document.getElementById("brand").textContent="PipsFlips • "+activeMarket+" Live";
@@ -1172,13 +1254,16 @@ async function refresh(){
     document.getElementById("cvd").textContent=rthActive&&cvd!==null&&Number.isFinite(+cvd)?((+cvd>0?"+":"")+nfmt(cvd)):"—";
     document.getElementById("cvd").className="v "+(rthActive&&+cvd>0?"buy":rthActive&&+cvd<0?"sell":"");
     const sig=d.signal?.side||"NEUTRAL", se=document.getElementById("signal");
-    se.textContent=sig;se.className="s "+(sig==="BUY"?"buy":sig==="SELL"?"sell":"neutral");
+    se.textContent=sig==="BUY"?"BULLISH EVIDENCE":sig==="SELL"?"BEARISH EVIDENCE":"MIXED EVIDENCE";se.className="s "+(sig==="BUY"?"buy":sig==="SELL"?"sell":"neutral");
     document.getElementById("score").textContent=(Number(d.signal?.score||0)/10).toFixed(1)+"/10";
     document.getElementById("reason").textContent=(d.signal?.reasons||[]).join(" • ")||"No confirmed trap signal yet.";
-    renderClosePressure(d);renderMarketStructure(d);renderAnalysis(d);renderEdgefulContext(d);renderIcebergs(d);renderRestingLiquidity(d);nearestLevels(d);trapRows(d);renderGaps(d);drawChart(d);
+    renderIBStrategy(d);renderClosePressure(d);renderMarketStructure(d);renderAnalysis(d);renderEdgefulContext(d);renderIcebergs(d);renderRestingLiquidity(d);nearestLevels(d);trapRows(d);renderGaps(d);drawChart(d);
     status.textContent=(d.connected?"Live feed connected":"Feed reconnecting")+" · auto refresh 2s";
   }catch(e){
     status.textContent="Indicator error: "+e.message;
+    document.getElementById("ibState").textContent="UNAVAILABLE — DATA FETCH FAILED";
+    document.getElementById("ibPlan").hidden=true;
+    document.getElementById("ibMarkTaken").disabled=true;
   }
 }
 document.querySelectorAll(".marketbtn").forEach(btn=>{
@@ -1188,6 +1273,9 @@ document.querySelectorAll(".marketbtn").forEach(btn=>{
     document.querySelectorAll(".marketbtn").forEach(b=>b.classList.toggle("active",b===btn));
     try{localStorage.setItem("pipsflipsMarket",activeMarket);}catch{}
     lastData=null;
+    document.getElementById("ibState").textContent="WAIT — COLLECTOR DATA";
+    document.getElementById("ibPlan").hidden=true;
+    document.getElementById("ibMarkTaken").disabled=true;
     document.getElementById("brand").textContent="PipsFlips • "+activeMarket+" Live";
     document.getElementById("contract").textContent=activeMarket;
     document.getElementById("price").textContent="—";

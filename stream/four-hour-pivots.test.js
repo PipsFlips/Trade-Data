@@ -10,8 +10,9 @@ const et=s=>DateTime.fromISO(s,{zone:'America/New_York'});
 const bar=(t,p)=>({t:t.toUTC().toISO(),o:p,h:p+1,l:p-1,c:p+.25,v:10});
 test('4H aggregation follows CME session alignment and keeps the shortened pre-maintenance bar',()=>{
   const originalNow=Settings.now;
+  const frozenNow=et('2026-09-29T18:30').toMillis();
   try{
-    Settings.now=()=>et('2026-09-29T18:30').toMillis();
+    Settings.now=()=>frozenNow;
     const starts=[
       '2026-09-28T18:00','2026-09-28T19:00','2026-09-28T20:00','2026-09-28T21:00',
       '2026-09-28T22:00','2026-09-28T23:00','2026-09-29T00:00','2026-09-29T01:00',
