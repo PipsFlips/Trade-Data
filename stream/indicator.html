@@ -102,6 +102,10 @@ canvas{display:block;width:100%;height:410px;border-radius:8px;background:#0d131
 
 .ibHeading,.ibFooter{display:flex;align-items:center;justify-content:space-between;gap:10px}.ibHeading h2{margin:0;font-size:15px}.ibHeading span,.ibFooter span{font-size:11px;color:var(--muted)}.ibState{font-size:20px;font-weight:850;margin-top:10px}.ibReason{font-size:12px;line-height:1.5;color:#c9d2dc;margin:6px 0 12px}.ibFacts,.ibPlan{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:6px}.ibFact{background:var(--panel2);border-radius:8px;padding:8px;min-width:0}.ibFact small{display:block;font-size:9px;text-transform:uppercase;color:var(--muted);margin-bottom:4px}.ibFact b{font-size:12px;overflow-wrap:anywhere}.ibPlan{border-top:1px solid var(--line);padding-top:10px;margin-top:10px}.ibPlan[hidden]{display:none}.ibFooter{margin-top:12px}.ibNote,.ibRules{color:var(--muted);font-size:10px;line-height:1.5;margin-top:9px}.ibRules summary{cursor:pointer}.advancedBody{padding:9px}.advancedBody .signal{margin-bottom:9px;text-align:left}.advancedBody .grid{margin-top:9px}.winbtn:disabled{opacity:.4;cursor:not-allowed}@media(max-width:480px){.ibFacts,.ibPlan{grid-template-columns:repeat(2,minmax(0,1fr))}.ibState{font-size:17px}.ibHeading span{font-size:9px}}
 </style>
+<style>
+.strategyBody{padding:10px}.strategyChooser{display:flex;align-items:center;justify-content:space-between;gap:10px;margin-bottom:12px}.strategyChooser label{font-size:11px;color:var(--muted)}.strategyChooser select{max-width:60%;appearance:auto;border:1px solid #41536a;border-radius:8px;background:var(--panel2);color:var(--text);padding:7px 10px;font:inherit;font-size:12px}#selectedStrategyLabel{font-size:10px;color:var(--blue);margin-left:auto;margin-right:10px}.ibPanel{min-width:0}
+@media(max-width:480px){.chartHead{align-items:flex-start;flex-direction:column;gap:3px}}
+</style>
 </head>
 <body>
 <div class="wrap">
@@ -119,16 +123,22 @@ canvas{display:block;width:100%;height:410px;border-radius:8px;background:#0d131
 
   </div>
 
-  <section class="section ibPanel" id="ibStrategyPanel" aria-label="IB Strategy">
-    <div class="ibHeading"><h2>IB Strategy</h2><span id="ibClock">10:30–11:30 ET</span></div>
+  <details class="section collapsibleSection" id="strategyBox">
+    <summary class="collapsibleSectionSummary"><span>Strategies</span><span id="selectedStrategyLabel">IB Strategy</span></summary>
+    <div class="strategyBody">
+      <div class="strategyChooser"><label for="strategySelect">Displayed strategy</label><select id="strategySelect"><option value="IB">IB Strategy</option><option value="ORB">ORB Strategy</option></select></div>
+  <section class="ibPanel" id="ibStrategyPanel" aria-label="IB Strategy">
+    <div class="ibHeading"><h2 id="strategyTitle">IB Strategy</h2><span id="ibClock">10:30–11:30 ET</span></div>
     <div class="ibState neutral" id="ibState" role="status">WAIT — COLLECTOR DATA</div>
     <p class="ibReason" id="ibReason">MNQ · first 60-minute IB break &amp; retest</p>
     <div class="ibFacts" id="ibFacts"></div>
     <div class="ibPlan" id="ibPlan" hidden></div>
     <div class="ibFooter"><span id="ibDaily">0 of 1 trades marked taken</span><button class="winbtn" id="ibMarkTaken" type="button" disabled>Mark trade taken</button></div>
-    <div class="ibNote">MNQ only · $100 planned risk maximum · 5 contracts maximum · 20-point stop maximum · 1.5R target · one trade per day. Cancel unfilled entries at 11:30 ET.</div>
-    <details class="ibRules"><summary>Setup rules &amp; tracking</summary><p>IB forms 09:30–10:30 ET. Eligible size: 0.60% to below 0.90%. Require a completed 5-minute breakout close aligned with NY VWAP and TREND UP/DOWN structure. Wait for the first IB-boundary touch, then a rejection close outside the IB; no close more than 25% inside the range. Entry is one tick beyond confirmation high/low; stop is two points beyond the retest extreme. No opposite-side retry or re-entry. Targets round outward to the nearest tick, at least 1.5R.</p><p>NY VWAP for the historical candle checks is calculated from collector OHLCV bars. This rule set has not been backtested for expectancy. Dollar amounts exclude commissions and slippage. Price touches are not verified fills. Trade status is your manual record in this browser, with no broker connection or account-level lockout.</p></details>
+    <div class="ibNote" id="strategyNote">MNQ only · $100 planned price-risk maximum · 5 contracts maximum · 20-point stop maximum · 1.5R target · one trade per day across both strategies. Cancel unfilled IB entries at 11:30 ET.</div>
+    <details class="ibRules"><summary>Setup rules &amp; tracking</summary><p id="strategyRules">IB forms 09:30–10:30 ET. Eligible size: 0.60% to below 0.90%. Require a completed 5-minute breakout close aligned with NY VWAP and TREND UP/DOWN structure. Wait for the first IB-boundary touch, then a rejection close outside the IB; no close more than 25% inside the range. Entry is one tick beyond confirmation high/low; stop is two points beyond the retest extreme. No opposite-side retry or re-entry. Targets round outward to the nearest tick, at least 1.5R.</p><p>NY VWAP for the historical candle checks is calculated from collector OHLCV bars. Neither rule set has been backtested for expectancy. Dollar amounts exclude commissions and slippage; allow for those costs or reduce size before placing an order. Price touches are not verified fills. Trade status is your manual record in this browser, shared across IB and ORB, with no broker connection or account-level lockout. Choose your strategy before the session; switching after a loss does not reset the recorded trade.</p></details>
   </section>
+    </div>
+  </details>
 
   <div class="chartCard">
     <div class="chartHead">
@@ -433,9 +443,12 @@ canvas{display:block;width:100%;height:410px;border-radius:8px;background:#0d131
 
 <script>
 let activeMarket="MNQ";
+let selectedStrategy="IB";
 try{
   const savedMarket=localStorage.getItem("pipsflipsMarket");
   if(savedMarket==="MES"||savedMarket==="MNQ") activeMarket=savedMarket;
+  const savedStrategy=localStorage.getItem("pipsflipsStrategy");
+  if(savedStrategy==="IB"||savedStrategy==="ORB")selectedStrategy=savedStrategy;
 }catch{}
 let viewerId=null;
 try{
@@ -655,15 +668,15 @@ function drawChart(data){
   const y=p=>top+(max-p)/(max-min)*ch;
   const x=i=>left+(i+.5)*cw/bars.length;
 
-  // IB boundaries stay on the execution chart; optional 15m ORB remains independent.
-  const ib=data.ibStrategy;
+  // Only the selected execution range is automatic; advanced overlays remain optional.
+  const ib=selectedStrategy==='ORB'?data.orbStrategy:data.ibStrategy;
   if(activeMarket==='MNQ'&&barKind==='5m'&&ib&&Number.isFinite(ib.high)&&Number.isFinite(ib.low)){
     const start=bars.findIndex(b=>{
       const date=new Date(b.t).toLocaleDateString('en-CA',{timeZone:'America/New_York'});
       return date===ib.date&&etSessionMinutes(Date.parse(b.t))>=570;
     });
     if(start>=0){
-      for(const [price,label,col] of [[ib.high,'IB H','#57a4ff'],[ib.low,'IB L','#b7a1f7']]){
+      for(const [price,label,col] of [[ib.high,selectedStrategy+' H','#57a4ff'],[ib.low,selectedStrategy+' L','#b7a1f7']]){
         if(price<min||price>max)continue;
         ctx.save();ctx.strokeStyle=col;ctx.lineWidth=1;ctx.setLineDash([4,4]);
         ctx.beginPath();ctx.moveTo(x(start),y(price));ctx.lineTo(w-right,y(price));ctx.stroke();
@@ -1131,24 +1144,41 @@ function renderEdgefulContext(data){
     (excluded.length?" · London→NY correlation excluded: "+excluded[0]:"");
 }
 
-let ibCurrent=null,ibMarkedDate=null,ibStorageAvailable=true;
+let ibCurrent=null,ibMarkedDate=null,ibStorageAvailable=true,strategyData=null;
+const strategyRules={
+  IB:'IB forms 09:30–10:30 ET. Eligible size: 0.60% to below 0.90%. Require a completed 5-minute breakout close aligned with NY VWAP and TREND UP/DOWN structure. Wait for the first IB-boundary touch, then a rejection close outside the IB; no close more than 25% inside the range. Entry is one tick beyond confirmation high/low; stop is two points beyond the retest extreme. No opposite-side retry or re-entry. Targets round outward to the nearest tick, at least 1.5R.',
+  ORB:'ORB forms 09:30–09:45 ET from three completed 5-minute bars. Entries are allowed from 09:45 until 10:15 ET. Require the first 5-minute breakout close aligned with NY VWAP and TREND UP/DOWN structure. The first boundary retest must occur within the next three completed 5-minute candles and close back outside the range. A failed first retest cancels the setup. Entry is one tick beyond the confirmation high/low; stop is two points beyond that retest candle. Maximum stop: 20 points. Target: at least 1.5R, rounded outward to a valid tick. An unfilled entry expires after the next 5-minute candle or at 10:15 ET, whichever comes first. Close any remaining ORB position at 10:30 ET. No second attempt or opposite-side retry.'
+};
 function ibFact(label,value){return '<div class="ibFact"><small>'+label+'</small><b>'+value+'</b></div>';}
 function renderIBStrategy(data){
-  const s=data.ibStrategy;
+  strategyData=data||null;
+  const name=selectedStrategy+' Strategy',range=selectedStrategy,cutoff=selectedStrategy==='ORB'?'10:15':'11:30';
+  const s=selectedStrategy==='ORB'?data?.orbStrategy:data?.ibStrategy;
+  document.getElementById('strategySelect').value=selectedStrategy;
+  document.getElementById('selectedStrategyLabel').textContent=name;
+  document.getElementById('strategyTitle').textContent=name;
+  document.getElementById('ibStrategyPanel').setAttribute('aria-label',name);
+  document.getElementById('strategyRules').textContent=strategyRules[selectedStrategy];
+  document.getElementById('strategyNote').textContent='MNQ only · $100 planned price-risk maximum · 5 contracts maximum · 20-point stop maximum · 1.5R target · one trade per day across both strategies. '+(selectedStrategy==='ORB'?'Entry cutoff 10:15 ET; close remaining ORB positions at 10:30 ET.':'Cancel unfilled IB entries at 11:30 ET.');
   ibCurrent=s||null;
   const button=document.getElementById('ibMarkTaken');
   const state=document.getElementById('ibState'),planEl=document.getElementById('ibPlan');
-  if(!s){state.textContent='UNAVAILABLE — STRATEGY DATA';planEl.hidden=true;button.disabled=true;return;}
+  if(!s){
+    state.textContent='UNAVAILABLE — STRATEGY DATA';state.className='ibState neutral';
+    document.getElementById('ibReason').textContent='Waiting for fresh '+name+' collector data.';
+    document.getElementById('ibFacts').innerHTML='';document.getElementById('ibClock').textContent='Entry cutoff '+cutoff+' ET';
+    planEl.hidden=true;planEl.innerHTML='';button.disabled=true;return;
+  }
   let marked=ibMarkedDate===s.date;
-  try{marked=marked||localStorage.getItem('pipsflipsIBTrade:'+s.date)==='taken';}catch{ibStorageAvailable=false;}
+  try{marked=marked||localStorage.getItem('pipsflipsIBTrade:'+s.date)==='taken'||localStorage.getItem('pipsflipsStrategyTrade:'+s.date)==='taken';}catch{ibStorageAvailable=false;}
   const disabledMarket=activeMarket!=='MNQ';
   state.textContent=marked&&!disabledMarket?'DONE FOR DAY — TRADE MARKED TAKEN':s.state;
   state.className='ibState '+(!marked&&s.state==='LONG ENTRY'?'buy':!marked&&s.state==='SHORT ENTRY'?'sell':'neutral');
-  document.getElementById('ibReason').textContent=marked&&!disabledMarket?'One trade recorded today. No new entry. Manage any open position with its existing bracket.':s.reason;
-  document.getElementById('ibClock').textContent=s.cutoffMinutes>0?s.cutoffMinutes+' min to 11:30 ET':'Entry window closed · ET';
+  document.getElementById('ibReason').textContent=marked&&!disabledMarket?'One trade recorded today across IB and ORB. No new entry. Manage any open position with its existing bracket; ORB time exit is 10:30 ET.':s.reason;
+  document.getElementById('ibClock').textContent=s.cutoffMinutes>0?s.cutoffMinutes+' min to '+cutoff+' ET':'Entry window closed · ET';
   document.getElementById('ibFacts').innerHTML=[
-    ibFact('IB high',s.high===null?'—':fmt(s.high)),ibFact('IB low',s.low===null?'—':fmt(s.low)),
-    ibFact('IB size',s.sizePct===null?'—':s.sizePct.toFixed(3)+'% · '+(s.eligible?'eligible':'not eligible')),
+    ibFact(range+' high',s.high===null?'—':fmt(s.high)),ibFact(range+' low',s.low===null?'—':fmt(s.low)),
+    ibFact(range+' size',s.sizePct===null?'—':s.sizePct.toFixed(3)+'% · '+(s.eligible?(selectedStrategy==='ORB'?'formed':'eligible'):'not eligible')),
     ibFact('NY VWAP · bar estimate',s.vwap===null?'—':fmt(s.vwap)),ibFact('Structure at last check',s.structure||'—'),
     ibFact('Break / retest / close',[s.breakout,s.retest,s.confirmation].map(x=>x?'✓':'—').join(' / '))
   ].join('');
@@ -1157,20 +1187,32 @@ function renderIBStrategy(data){
   planEl.innerHTML=p?[
     ibFact('Stop-entry · '+p.side,fmt(p.entry)),ibFact('Stop',fmt(p.stop)),ibFact('Target',fmt(p.target)),
     ibFact('Size',p.contracts+' MNQ'),ibFact('Stop distance',fmt(p.distance)+' points'),ibFact('Planned risk','$'+fmt(p.risk)),
-    ibFact('Planned reward','$'+fmt(p.reward)),ibFact('Reward / risk',p.rr.toFixed(2)+'R'),ibFact('Confirmation · ET',new Date(p.confirmedAt).toLocaleTimeString('en-US',{timeZone:'America/New_York',hour:'2-digit',minute:'2-digit'}))
+    ibFact('Planned reward','$'+fmt(p.reward)),ibFact('Reward / risk',p.rr.toFixed(2)+'R'),ibFact('Confirmation · ET',new Date(p.confirmedAt).toLocaleTimeString('en-US',{timeZone:'America/New_York',hour:'2-digit',minute:'2-digit'})),
+    ...(selectedStrategy==='ORB'?[ibFact('Entry expires · ET',new Date(p.expiresAt).toLocaleTimeString('en-US',{timeZone:'America/New_York',hour:'2-digit',minute:'2-digit'})),ibFact('Time exit · ET','10:30')]:[])
   ].join(''):'';
-  document.getElementById('ibDaily').textContent=(marked?'1':'0')+' of 1 trades marked taken'+(ibStorageAvailable?'':' · reload persistence unavailable');
+  document.getElementById('ibDaily').textContent=(marked?'1':'0')+' of 1 trades marked taken · shared IB / ORB'+(ibStorageAvailable?'':' · reload persistence unavailable');
   button.disabled=marked||disabledMarket;
 }
 document.getElementById('ibMarkTaken').addEventListener('click',()=>{
   if(!ibCurrent||activeMarket!=='MNQ')return;
   ibMarkedDate=ibCurrent.date;
-  try{localStorage.setItem('pipsflipsIBTrade:'+ibCurrent.date,'taken');}catch{ibStorageAvailable=false;}
-  renderIBStrategy({ibStrategy:ibCurrent});
+  try{
+    localStorage.setItem('pipsflipsStrategyTrade:'+ibCurrent.date,'taken');
+    localStorage.setItem('pipsflipsIBTrade:'+ibCurrent.date,'taken'); // Preserve existing open IB tabs and old records.
+  }catch{ibStorageAvailable=false;}
+  renderIBStrategy(strategyData);
 });
 window.addEventListener('storage',e=>{
-  if(e.key?.startsWith('pipsflipsIBTrade:')&&ibCurrent)renderIBStrategy({ibStrategy:ibCurrent});
+  if((e.key?.startsWith('pipsflipsIBTrade:')||e.key?.startsWith('pipsflipsStrategyTrade:'))&&strategyData)renderIBStrategy(strategyData);
 });
+document.getElementById('strategySelect').value=selectedStrategy;
+document.getElementById('strategySelect').addEventListener('change',e=>{
+  selectedStrategy=e.target.value==='ORB'?'ORB':'IB';
+  try{localStorage.setItem('pipsflipsStrategy',selectedStrategy);}catch{}
+  renderIBStrategy(strategyData);
+  if(lastData)drawChart(lastData);
+});
+renderIBStrategy(null);
 
 function renderAnalysis(data){
   const a=data.analysis||{};
@@ -1261,6 +1303,7 @@ async function refresh(){
     status.textContent=(d.connected?"Live feed connected":"Feed reconnecting")+" · auto refresh 2s";
   }catch(e){
     status.textContent="Indicator error: "+e.message;
+    renderIBStrategy(null);
     document.getElementById("ibState").textContent="UNAVAILABLE — DATA FETCH FAILED";
     document.getElementById("ibPlan").hidden=true;
     document.getElementById("ibMarkTaken").disabled=true;
@@ -1273,6 +1316,7 @@ document.querySelectorAll(".marketbtn").forEach(btn=>{
     document.querySelectorAll(".marketbtn").forEach(b=>b.classList.toggle("active",b===btn));
     try{localStorage.setItem("pipsflipsMarket",activeMarket);}catch{}
     lastData=null;
+    renderIBStrategy(null);
     document.getElementById("ibState").textContent="WAIT — COLLECTOR DATA";
     document.getElementById("ibPlan").hidden=true;
     document.getElementById("ibMarkTaken").disabled=true;
@@ -1284,10 +1328,10 @@ document.querySelectorAll(".marketbtn").forEach(btn=>{
     refresh();
   });
 });
-document.querySelectorAll(".winbtn").forEach(btn=>btn.addEventListener("click",()=>{
+document.querySelectorAll(".winbtn[data-mode]").forEach(btn=>btn.addEventListener("click",()=>{
   chartMode=btn.dataset.mode||"intraday";
   if(chartMode==="intraday") chartBarCount=+btn.dataset.bars;
-  document.querySelectorAll(".winbtn").forEach(b=>b.classList.toggle("active",b===btn));
+  document.querySelectorAll(".winbtn[data-mode]").forEach(b=>b.classList.toggle("active",b===btn));
   const labels={intraday:(chartBarCount/12)+"h rolling","1d":"1 day","1w":"1 week","1m":"1 month"};
   const titles={intraday:"5-minute structure + live levels","1d":"1-day structure + live levels","1w":"1-week structure + live levels","1m":"1-month structure + live levels"};
   document.getElementById("windowLabel").textContent=labels[chartMode];
