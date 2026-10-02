@@ -43,7 +43,7 @@ function compareIndicators(snap,trade){
   add('signal','Recorded actionable signal',snap.signal?.side||'Unavailable',snap.signal?.side===wanted?true:snap.signal?.side&&snap.signal.side!=='NEUTRAL'?false:null,`Recorded score ${snap.signal?.score??'unavailable'}; signal direction alone does not confirm an entry.`);
   return items;
 }
-function createAuditService({dir,post,getMarket,getSnapshot,structureAt,mesUrl='',accessToken='',enabled=true,now=()=>Date.now(),pollMs=30000}){
+function createAuditService({dir,post,getMarket,getSnapshot,structureAt,mesUrl='',accessToken='',enabled=true,now=()=>Date.now(),pollMs=60000}){
   fs.mkdirSync(dir,{recursive:true});
   const stateFile=path.join(dir,'state.json');
   const state=read(stateFile)||{schema:1,createdAt:new Date(now()).toISOString(),policies:[],accounts:[],coverage:{},lastSync:null,backfillCursor:0};
@@ -57,6 +57,7 @@ function createAuditService({dir,post,getMarket,getSnapshot,structureAt,mesUrl='
   const revision=hash(versions).slice(0,16);atomic(path.join(dir,'strategy-revisions',revision+'.json'),{revision,versions,registeredAt:new Date(now()).toISOString()});
   for(const file of Object.keys(versions)){const dest=path.join(dir,'strategy-revisions',revision+'-'+file);if(!fs.existsSync(dest))fs.copyFileSync(path.join(__dirname,file),dest);}
   const rebuild=()=>book=reconstruct([...fills.values()]);rebuild();
+  function observedAccounts(){return state.accounts.filter(x=>x.canTrade||x.isVisible||config().allowedAccountIds.includes(x.id));}
   const save=()=>atomic(stateFile,state);
   async function readApi(route,payload){if(!READ_PATHS.has(route))throw new Error('Endpoint not permitted by read-only audit collector');const j=await post(route,payload);if(j.success!==true)throw new Error('ProjectX read failed');return j;}
   function mergeRows(kind,rows){const target=kind==='executions'?fills:orders;for(const row of rows||[]){if(row.accountId==null||row.id==null)continue;const key=`${row.accountId}:${row.id}`;if(hash(target.get(key))===hash(row))continue;append(path.join(dir,`${kind}-${sessionDate(row.creationTimestamp)}.jsonl`),{receivedAt:new Date(now()).toISOString(),revision:target.has(key)?'correction':'initial',row});target.set(key,row);}rebuild();}
@@ -76,8 +77,14 @@ function createAuditService({dir,post,getMarket,getSnapshot,structureAt,mesUrl='
       const a=await readApi('/api/Account/search',{onlyActiveAccounts:false});
       // No balances or account IDs are exposed in public routes or logs.
       state.accounts=(a.accounts||[]).map(x=>({id:x.id,name:x.name,balance:x.balance,canTrade:x.canTrade,isVisible:x.isVisible,simulated:x.simulated}));
+      if(!state.policies.length){
+        const funded=state.accounts.filter(x=>x.isVisible&&/^EXPRESS[-_]|^XFA[-_]/i.test(x.name));
+        // User authorized a funded-only reset. Resolve only an unambiguous visible
+        // Express account; never guess among multiple funded accounts.
+        if(funded.length===1)state.policies.push({...DEFAULT_POLICY,allowedAccountIds:[funded[0].id],effectiveAt:new Date(now()).toISOString(),selectionSource:'Single visible Express Funded account, matched to user-funded-only instruction'});
+      }
       const date=sessionDate(now());
-      for(const account of state.accounts.filter(x=>x.canTrade||x.isVisible||config().allowedAccountIds.includes(x.id))){
+      for(const account of observedAccounts()){
         await fetchDay(account,date);
         try{const p=await readApi('/api/Position/searchOpen',{accountId:account.id}),o=await readApi('/api/Order/searchOpen',{accountId:account.id});const observation={recordedAt:new Date(now()).toISOString(),accountId:account.id,balance:account.balance,positions:p.positions||[],openOrders:o.orders||[]};append(path.join(dir,`observations-${sessionDate(now())}.jsonl`),observation);observations.push(observation);observations=observations.slice(-10000);}catch{}
       }
@@ -90,7 +97,7 @@ function createAuditService({dir,post,getMarket,getSnapshot,structureAt,mesUrl='
     try{
       const today=DateTime.fromISO(sessionDate(now()));const jobs=[];
       // Prioritize recent days across accounts; continue over restarts, 30 days initially.
-      for(let d=1;d<=30;d++)for(const a of state.accounts.filter(x=>x.canTrade||x.isVisible||config().allowedAccountIds.includes(x.id)))jobs.push([a,today.minus({days:d}).toISODate()]);
+      for(let d=1;d<=30;d++)for(const a of observedAccounts())jobs.push([a,today.minus({days:d}).toISODate()]);
       for(const [a,date] of jobs){if(state.coverage[`${a.id}:${date}`]?.complete)continue;await fetchDay(a,date);break;}
     }finally{backfillBusy=false;}
   }
@@ -159,7 +166,7 @@ function createAuditService({dir,post,getMarket,getSnapshot,structureAt,mesUrl='
   function policyFor(date){const end=Date.parse(sessionBounds(date).end);return [...state.policies].reverse().find(p=>Date.parse(p.effectiveAt)<end)||{...DEFAULT_POLICY};}
   function allAudits(){const dates=[...new Set(book.fills.map(f=>sessionDate(f.at)))].sort().slice(-90);return dates.flatMap(date=>[...new Set(book.fills.filter(f=>sessionDate(f.at)===date).map(f=>f.accountId))].map(accountId=>auditDay({date,accountId,book,policy:policyFor(date),attestations,spending,coverage:state.coverage[`${accountId}:${date}`]||{},now:now()})));}
   function needsJournal(t){return t.complete&&t.exitMs>=Date.parse(state.createdAt)&&!journals.some(j=>j.tradeId===t.id);}
-  function data(){const audits=allAudits();return {generatedAt:new Date(now()).toISOString(),status,accounts:state.accounts,policy:config(),policyHistory:state.policies,collector:{lastSync:state.lastSync,startedAt:state.createdAt,historyDays:30,coverage:state.coverage,fillCount:fills.size,orderCount:orders.size,revision},audits,compliance:complianceSummary(audits),trades:book.trades.slice(-500).reverse().map(t=>({...t,fills:undefined,journal:journals.filter(j=>j.tradeId===t.id).at(-1)||null,journalRequired:needsJournal(t)})),journalsPending:book.trades.filter(needsJournal).length,attestations,spending,plans,reviews,strategies:strategyLibrary(),warnings:book.warnings,privacy:'Owner-private Site. This API requires a dedicated server credential. No trading records appear on public indicator routes.'};}
+  function data(){const audits=allAudits();return {generatedAt:new Date(now()).toISOString(),status,accounts:observedAccounts(),policy:config(),policyHistory:state.policies,collector:{lastSync:state.lastSync,startedAt:state.createdAt,historyDays:30,coverage:state.coverage,fillCount:fills.size,orderCount:orders.size,revision},audits,compliance:complianceSummary(audits),trades:book.trades.slice(-500).reverse().map(t=>({...t,fills:undefined,journal:journals.filter(j=>j.tradeId===t.id).at(-1)||null,journalRequired:needsJournal(t)})),journalsPending:book.trades.filter(needsJournal).length,attestations,spending,plans,reviews,strategies:strategyLibrary(),warnings:book.warnings,privacy:'Owner-private Site. This API requires a dedicated server credential. No trading records appear on public indicator routes.'};}
   function strategyLibrary(){const latest=new Map();for(const j of journals)latest.set(j.tradeId,j);return [{id:'orb',name:'15-minute ORB break / retest',markets:['MNQ','MES'],rules:'09:30–09:45 ET range; close beyond boundary, first retest and completed rejection; VWAP and structure checks; entry cutoff 10:15, time exit 10:30 ET.',file:'orb-strategy.js'}, {id:'ib',name:'MNQ Initial Balance break / retest',markets:['MNQ'],rules:'09:30–10:30 ET IB; 0.60–0.89% size bucket; VWAP and structure alignment; breakout then distinct retest; no opposite retry.',file:'ib-strategy.js'}, {id:'failure',name:'MES Opening Range Failure',markets:['MES'],rules:'09:30–09:45 ET ORB; failed breakout and retest into range; next-bar entry expiry; 10:30 ET cutoff / exit.',file:'mes-failure-strategy.js'}, {id:'indicator-context',name:'Indicator confluence and Edgeful context',markets:['MNQ','MES'],rules:'Recorded market structure, analysis setups, levels, VWAPs, profiles, deltas/CVD, order blocks, traps, absorption, iceberg, liquidity, gaps and Edgeful context. Evidence dimensions, not independent validated strategies.',file:'server.js'},...hypotheses.map(h=>({...h,name:h.title,file:null}))].map(s=>{const r=s.revision||revision,tags=[...latest.values()].filter(j=>j.strategy===s.id&&j.revision===r),closed=book.trades.filter(t=>t.complete&&tags.some(j=>j.tradeId===t.id));const wins=closed.filter(t=>t.net>0).length;return {...s,revision:r,sourceHash:s.file?versions[s.file]:hash(s.rules),status:'RESEARCH — NOT VALIDATED',taggedTrades:closed.length,winRate:closed.length?wins/closed.length:null,net:cash(closed.reduce((n,t)=>n+t.net,0)),sampleRule:'Latest journal tag only, current rule revision only. A label is self-reported; a candidate is not proof of compliance. Separate market, regime and discipline. Reserve later sessions for out-of-sample validation.'};});}
   function requireToken(req,res,next){res.set('Cache-Control','no-store');res.set('X-Robots-Tag','noindex, nofollow');const supplied=String(req.headers.authorization||'');const expected='Bearer '+accessToken;const a=Buffer.from(supplied),b=Buffer.from(expected);if(!accessToken||a.length!==b.length||!crypto.timingSafeEqual(a,b))return res.status(401).json({error:'Unauthorized'});next();}
   const text=(value,max=4000)=>typeof value==='string'?value.trim().slice(0,max):'';
@@ -169,7 +176,7 @@ function createAuditService({dir,post,getMarket,getSnapshot,structureAt,mesUrl='
     app.get('/audit/data',(req,res)=>{try{res.json(data());}catch{res.status(503).json({error:'Audit data unavailable'});}});
     app.get('/audit/trade/:id',(req,res)=>{const t=book.trades.find(t=>t.id===req.params.id);if(!t)return res.status(404).json({error:'Trade not found'});try{res.json({...analyzeTrade(t),chartBars:loadBars(t.symbol,sessionDate(t.entryMs)).filter(b=>Date.parse(b.t)>=t.entryMs-3600000&&Date.parse(b.t)<=Math.min(now(),(t.exitMs||t.entryMs)+3600000)).slice(0,300)});}catch{res.status(503).json({error:'Trade context unavailable'});}});
     app.post('/audit/config',(req,res)=>{
-      const id=Number(req.body.accountId);if(!state.accounts.some(a=>a.id===id&&a.canTrade))return res.status(400).json({error:'Select one active funded account.'});
+      const id=Number(req.body.accountId);if(!observedAccounts().some(a=>a.id===id))return res.status(400).json({error:'Select your current funded account.'});
       if(config().allowedAccountIds.length&&config().allowedAccountIds[0]!==id)return res.status(409).json({error:'Funded account already selected. Account changes require a reviewed policy revision; they cannot erase the reset.'});
       if(!state.policies.length){state.policies.push({...DEFAULT_POLICY,allowedAccountIds:[id],effectiveAt:new Date(now()).toISOString()});save();}res.json({policy:config()});
     });
