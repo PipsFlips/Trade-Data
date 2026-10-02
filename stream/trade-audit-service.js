@@ -20,7 +20,9 @@ function compact(p,recordedAt){
     vwap:p.vwap,levels:p.levels,profiles,volatility:p.volatility,marketStructure:p.marketStructure,signal:p.signal,analysis:p.analysis,edgefulContext:p.edgefulContext,
     orderBlocks:p.orderBlocks,trapCandidates:p.trapCandidates,confirmedTraps:p.confirmedTraps,absorptionZones:p.absorptionZones,icebergs:p.icebergs,restingLiquidity:p.restingLiquidity,gaps:p.gaps,orb:p.orb,middayOrb:p.middayOrb,closePressure:p.closePressure,
     ibStrategy:p.ibStrategy,orbStrategy:p.orbStrategy,failureStrategy:p.failureStrategy,
-    bars5m:closed(p.bars5m,300000).slice(-400),bars1h:closed(p.bars1h,3600000).slice(-240),bars4h:closed(p.bars4h,14400000).slice(-120),bars1d:closed(p.bars1d,86400000).slice(-60)};
+    // Complete price history is archived separately once per timestamp.
+    // Snapshots only need a bounded trailing window for entry-time direction.
+    bars5m:closed(p.bars5m,300000).slice(-12),bars1h:closed(p.bars1h,3600000).slice(-12),bars4h:closed(p.bars4h,14400000).slice(-12),bars1d:closed(p.bars1d,86400000).slice(-12)};
 }
 function trend(rows,ms,asOf){const b=(rows||[]).filter(x=>Date.parse(x.t)+ms<=asOf).slice(-6);if(b.length<6)return {direction:'UNAVAILABLE',bars:b.length};const up=b.at(-1).c>b[0].c&&b.at(-1).h>b[0].h&&b.at(-1).l>b[0].l,down=b.at(-1).c<b[0].c&&b.at(-1).h<b[0].h&&b.at(-1).l<b[0].l;return {direction:up?'BULLISH':down?'BEARISH':'MIXED',bars:b.length,method:'Six completed bars: close, high and low progression.'};}
 function compareIndicators(snap,trade){
