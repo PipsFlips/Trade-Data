@@ -25,9 +25,46 @@ test('profit ceiling and daily loss ceiling detect subsequent entry, including e
 });
 test('simultaneous instruments are included in total contract cap',()=>{const b=audit([mk(1,0,0,3,100),mk(2,1,0,3,100,null,{contractId:'CON.F.US.MES.Z26'}),mk(3,2,1,3,101,6),mk(4,3,1,3,101,15,{contractId:'CON.F.US.MES.Z26'})]);assert.equal(b.maxContracts,6);assert.equal(b.checks.find(c=>c.key==='contracts').status,'FAIL');assert.equal(b.checks.find(c=>c.key==='symbols').status,'FAIL');});
 test('self-confirmations and final order history cannot turn unknown risk checks into PASS',()=>{const a=audit([mk(1,0,0,1,100),mk(2,20,1,1,110,20)]);assert.equal(a.automaticResult,'PASS');assert.equal(a.result,'UNVERIFIED');for(const key of ['risk-lock','spending','stop-risk','intraday-risk'])assert.equal(a.checks.find(c=>c.key===key).status,'UNKNOWN');});
+test('authorized copies are separate accounts for entry and position limits; other accounts still fail',()=>{
+ const copyPolicy={...policy,allowedAccountIds:[1,2,3,4,5],copyAccountIds:[2,3,4,5]},rows=[];
+ for(let accountId=1;accountId<=6;accountId++)for(let n=0;n<3;n++)rows.push(mk(n*2+1,n*30,0,5,100,null,{accountId}),mk(n*2+2,n*30+20,1,5,102,20,{accountId}));
+ const book=reconstruct(rows);
+ for(let accountId=1;accountId<=6;accountId++){
+  const a=auditDay({date:'2026-10-02',accountId,book,policy:copyPolicy,coverage:{complete:true}});
+  assert.equal(a.entries,3);assert.equal(a.maxContracts,5);assert.equal(a.checks.find(c=>c.key==='account').status,accountId<=5?'PASS':'FAIL');
+  assert.equal(a.checks.find(c=>c.key==='entries').status,'PASS');assert.equal(a.checks.find(c=>c.key==='contracts').status,'PASS');
+ }
+});
+test('account policy revisions preserve reset start and do not grade pre-reset trades as violations',()=>{
+ const revised={...policy,effectiveAt:'2026-10-02T15:00:00Z',resetStartedAt:'2026-10-02T14:30:00Z',allowedAccountIds:[1,2],copyAccountIds:[2]};
+ const historical=[mk(1,0,0,10,100),mk(2,20,1,10,102,40)];
+ const a=auditDay({date:'2026-10-02',accountId:1,book:reconstruct(historical),policy:revised,coverage:{complete:true}});
+ assert.equal(a.result,'BASELINE');assert.equal(a.automaticResult,'BASELINE');assert.equal(a.active,false);assert.equal(a.failures.length,0);
+ const b=auditDay({date:'2026-10-02',accountId:1,book:reconstruct([...historical,mk(3,40,0,5,100),mk(4,50,1,5,102,20)]),policy:revised,coverage:{complete:true}});
+ assert.equal(b.active,true);assert.equal(b.entries,1);assert.equal(b.maxContracts,5);assert.equal(b.net,18);assert.equal(b.automaticResult,'PASS');
+ const c=auditDay({date:'2026-10-02',accountId:1,book:reconstruct([...historical,mk(3,40,0,6,100)]),policy:revised,coverage:{complete:true}});
+ assert.equal(c.checks.find(c=>c.key==='contracts').status,'FAIL');
+});
 test('ET session boundaries follow DST and 18:00 daily rollover',()=>{assert.equal(sessionDate('2026-10-01T21:59:59Z'),'2026-10-01');assert.equal(sessionDate('2026-10-01T22:00:00Z'),'2026-10-02');assert.equal(sessionBounds('2026-11-02').start,'2026-11-01T23:00:00.000Z');assert.equal(sessionBounds('2026-10-02').start,'2026-10-01T22:00:00.000Z');});
 test('archive excludes unfinished and future bars; no private data in indicator evidence shape',()=>{const now='2026-10-02T14:05:00Z';const c=compact({marketSymbol:'MNQ',bars5m:[{t:'2026-10-02T14:00:00Z'},{t:'2026-10-02T14:05:00Z'}],bars1h:[],accounts:[{id:1}],executions:[mk(1,0,0,1,100)]},now);assert.equal(c.bars5m.length,1);assert.equal(c.accounts,undefined);assert.equal(c.executions,undefined);});
 test('collector strictly refuses trading API paths',async()=>{const dir=fs.mkdtempSync(path.join(os.tmpdir(),'audit-'));const s=createAuditService({dir,post:async()=>({success:true}),getMarket:()=>({}),getSnapshot:()=>({}),structureAt:()=>'',enabled:false});await assert.rejects(s.readApi('/api/Order/place',{}));assert.equal([...READ_PATHS].some(x=>/place|modify|cancel/.test(x)),false);fs.rmSync(dir,{recursive:true});});
+test('copy-account authorization is validated, versioned, idempotent and persisted without changing risk limits',async()=>{
+ const dir=fs.mkdtempSync(path.join(os.tmpdir(),'audit-copy-'));let at=Date.parse('2026-10-02T13:59:00Z');
+ const accounts=[{id:1,name:'EXPRESS-Funded',isVisible:true,canTrade:true},...[2,3,4,5,6].map(id=>({id,name:'50KSDTC-'+id,isVisible:true,canTrade:true}))];
+ const post=async route=>route==='/api/Account/search'?{success:true,accounts}:route==='/api/Trade/search'?{success:true,trades:[]}:route==='/api/Position/searchOpen'?{success:true,positions:[]}:{success:true,orders:[]};
+ const opts={dir,post,getMarket:()=>({}),getSnapshot:()=>({}),structureAt:()=>'',accessToken:'test-secret',now:()=>at};const s=createAuditService(opts);await s.poll();const initial=s.data().policy;
+ const app=express();app.use(express.json());s.attach(app);const server=app.listen(0);await new Promise(r=>server.once('listening',r));const url='http://127.0.0.1:'+server.address().port;
+ const config=body=>fetch(url+'/audit/config',{method:'POST',headers:{Authorization:'Bearer test-secret','Content-Type':'application/json'},body:JSON.stringify(body)});
+ try{
+  at+=3600000;
+  for(const copyAccountIds of [[2,2],[1],[999],[2,3,4,5,6],['2']])assert.equal((await config({accountId:1,copyAccountIds})).status,400);
+  assert.equal((await config({accountId:2,copyAccountIds:[]})).status,409);
+  const response=await config({accountId:1,copyAccountIds:[5,4,3,2],maxContracts:100,maxEntries:100,reason:'Owner authorized copy trading'});assert.equal(response.status,200);
+  const updated=(await response.json()).policy;assert.deepEqual(updated.allowedAccountIds,[1,2,3,4,5]);assert.deepEqual(updated.copyAccountIds,[2,3,4,5]);assert.equal(updated.resetStartedAt,initial.effectiveAt);assert.notEqual(updated.id,initial.id);assert.equal(updated.maxContracts,5);assert.equal(updated.maxEntries,3);
+  assert.equal((await config({accountId:1,copyAccountIds:[2,3,4,5]})).status,200);assert.equal(s.data().policyHistory.length,2);
+  const restored=createAuditService(opts).data();assert.deepEqual(restored.policy,updated);assert.equal(restored.policyHistory.length,2);
+ }finally{server.close();fs.rmSync(dir,{recursive:true});}
+});
 test('token protection, durable idempotent polling, journal requirements and anti-backdating',async()=>{
  const dir=fs.mkdtempSync(path.join(os.tmpdir(),'audit-'));let at=Date.parse('2026-10-02T13:59:00Z'),rows=[];
  const post=async route=>route==='/api/Account/search'?{success:true,accounts:[{id:1,name:'XFA Test',canTrade:true,isVisible:true}]}:route==='/api/Trade/search'?{success:true,trades:rows}:route==='/api/Position/searchOpen'?{success:true,positions:[]}:{success:true,orders:[]};

@@ -45,7 +45,13 @@ function reconstruct(rows){
 }
 const DEFAULT_POLICY={id:'discipline-reset-v1',effectiveAt:null,allowedAccountIds:[],maxEntries:3,maxRisk:150,dailyLoss:300,dailyProfit:300,maxContracts:5,allowedSymbols:['MNQ'],cooldownMinutes:15,maxLosses:2,spendingLimit:0,targetSessions:20};
 function auditDay({date,accountId,book,policy=DEFAULT_POLICY,attestations=[],spending=[],coverage={},now=Date.now(),riskObservations=[]}){
-  const bounds=sessionBounds(date),start=Date.parse(bounds.start),end=Date.parse(bounds.end),effective=Date.parse(policy.effectiveAt),active=Number.isFinite(effective)&&end>effective;
+  const bounds=sessionBounds(date),start=Date.parse(bounds.start),end=Date.parse(bounds.end),effective=Date.parse(policy.resetStartedAt||policy.effectiveAt),auditStart=Math.max(start,effective);
+  const sessionFills=book.fills.filter(f=>f.accountId===accountId&&sessionDate(f.at)===date);
+  const active=Number.isFinite(effective)&&end>effective&&sessionFills.some(f=>f.at>=auditStart);
+  if(active){
+    const carryover=book.trades.some(t=>t.accountId===accountId&&t.entryMs<auditStart&&(!t.complete||t.exitMs>=auditStart)&&t.entryMs<end);
+    book={...book,fills:book.fills.filter(f=>f.at>=auditStart),entries:book.entries.filter(e=>e.at>=auditStart),exposure:book.exposure.filter(e=>e.at>=auditStart),trades:book.trades.filter(t=>t.entryMs>=auditStart),warnings:[...book.warnings.filter(w=>Date.parse(w.at)>=auditStart),...(carryover?[{accountId,at:new Date(auditStart).toISOString(),code:'PRE_RESET_POSITION_CARRYOVER'}]:[])]};
+  }
   const rows=book.fills.filter(f=>f.accountId===accountId&&sessionDate(f.at)===date),entries=book.entries.filter(e=>e.accountId===accountId&&sessionDate(e.at)===date);
   const closed=book.trades.filter(t=>t.accountId===accountId&&t.complete&&sessionDate(t.exitMs)===date);
   const open=book.trades.filter(t=>t.accountId===accountId&&!t.complete&&t.entryMs<end);
@@ -63,13 +69,13 @@ function auditDay({date,accountId,book,policy=DEFAULT_POLICY,attestations=[],spe
   const maxSize=Math.max(0,...exposures.map(e=>e.totalContracts));
   const notes=attestations.filter(a=>a.date===date&&a.accountId===accountId);
   const lock=notes.find(a=>a.kind==='risk-lock'&&a.recordedAt&&Date.parse(a.recordedAt)<(first?.at??end));
-  const purchases=spending.filter(x=>sessionDate(x.recordedAt)===date);
+  const purchases=spending.filter(x=>sessionDate(x.recordedAt)===date&&(!active||Date.parse(x.recordedAt)>=auditStart));
   const complete=coverage.complete===true&&!book.warnings.some(w=>w.accountId===accountId&&sessionDate(w.at)===date)&&book.invalid===0;
   const known=(violation)=>violation?'FAIL':complete?'PASS':'UNKNOWN';
   add('entries','Entry orders',known(entries.length>policy.maxEntries),`${entries.length} / ${policy.maxEntries}; additions count, partial fills of one order count once.`);
   add('contracts','Maximum total contracts',known(maxSize>policy.maxContracts),`${maxSize} / ${policy.maxContracts}; concurrent positions included.`);
   add('symbols','Permitted instruments',known(entries.some(e=>!policy.allowedSymbols.includes(e.symbol))),policy.allowedSymbols.join(', '));
-  add('account','Authorized account',policy.allowedAccountIds.length?known(!policy.allowedAccountIds.includes(accountId)):'UNKNOWN',policy.allowedAccountIds.length?'Funded-only reset.':'Select the funded account to establish the allowlist.');
+  add('account','Authorized account',policy.allowedAccountIds.length?known(!policy.allowedAccountIds.includes(accountId)):'UNKNOWN',policy.allowedAccountIds.length?(policy.copyAccountIds?.length?'Funded account and explicitly authorized copy-traded combines; limits checked per account.':'Funded account only.'):'Select the funded account to establish the allowlist.');
   add('cooldown','15-minute cooldown',known(cooldown.length>0),cooldown.length?cooldown.join(', '):'No observed entry inside cooldown after a completed net losing position.');
   add('size-increase','Size increase after loss',known(increased.length>0),increased.length?increased.join(', '):'Compared with the last losing position in the same instrument.');
   add('second-loss','No entry after two losses',known(afterLosses.length>0),afterLosses.length?afterLosses.join(', '):`${closed.filter(t=>t.net<0).length} completed losing positions.`);
@@ -83,9 +89,10 @@ function auditDay({date,accountId,book,policy=DEFAULT_POLICY,attestations=[],spe
   add('risk-lock','Risk Lock before first entry','UNKNOWN',lock?'Self-confirmed before entry; not independently verified through the API.':'No pre-entry confirmation recorded. Platform Risk Lock is not exposed by the documented API.');
   add('spending','No account purchases / resets',purchases.some(x=>x.amount>0)?'FAIL':'UNKNOWN',purchases.length?`Logged spending $${cash(purchases.reduce((n,x)=>n+x.amount,0))}.`:'No logged purchase; trade data does not verify outside spending.');
   add('coverage','Execution history coverage',complete?'PASS':'UNKNOWN',coverage.error||'Successful bounded account history fetch required; missing opening fills prevent a pass.');
+  if(!active&&rows.length)for(const check of checks){check.status='BASELINE';check.detail='Historical research only; this activity predates the discipline reset. '+check.detail;}
   const failures=checks.filter(c=>c.status==='FAIL');
   const automated=checks.filter(c=>!['risk-lock','spending','intraday-risk','stop-risk'].includes(c.key));
-  const automaticResult=failures.length?'FAIL':automated.every(c=>c.status==='PASS')?'PASS':'UNKNOWN';
+  const automaticResult=!active&&rows.length?'BASELINE':failures.length?'FAIL':automated.every(c=>c.status==='PASS')?'PASS':'UNKNOWN';
   const result=!rows.length?'NO TRADES':!active?'BASELINE':failures.length?'FAIL':checks.some(c=>c.status==='UNKNOWN')?'UNVERIFIED':'PASS';
   return {date,accountId,policyId:policy.id,active,result,automaticResult,finalized:now>=end,checks,failures,entries:entries.length,closedTrades:closed.length,openTrades:open.length,maxContracts:maxSize,net:cash(running),gross:cash(rows.reduce((n,f)=>n+(f.profitAndLoss??0),0)),fees:cash(rows.reduce((n,f)=>n+f.fees,0)),realizedDrawdown:cash(dd),minRealized:cash(min),firstEntry:first?.time??null,bounds};
 }

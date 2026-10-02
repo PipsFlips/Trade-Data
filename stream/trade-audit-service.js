@@ -180,7 +180,17 @@ function createAuditService({dir,post,getMarket,getSnapshot,structureAt,mesUrl='
     app.post('/audit/config',(req,res)=>{
       const id=Number(req.body.accountId);if(!observedAccounts().some(a=>a.id===id))return res.status(400).json({error:'Select your current funded account.'});
       if(config().allowedAccountIds.length&&config().allowedAccountIds[0]!==id)return res.status(409).json({error:'Funded account already selected. Account changes require a reviewed policy revision; they cannot erase the reset.'});
-      if(!state.policies.length){state.policies.push({...DEFAULT_POLICY,allowedAccountIds:[id],effectiveAt:new Date(now()).toISOString()});save();}res.json({policy:config()});
+      const primary=observedAccounts().find(a=>a.id===id);
+      if(!/^EXPRESS[-_]|^XFA[-_]/i.test(primary.name))return res.status(400).json({error:'The primary account must be your funded account.'});
+      const raw=req.body.copyAccountIds;
+      if(raw!==undefined&&(!Array.isArray(raw)||raw.length>4||raw.some(x=>!Number.isSafeInteger(x))||new Set(raw).size!==raw.length))return res.status(400).json({error:'Choose up to four distinct recorded combine accounts.'});
+      const copies=raw===undefined?(config().copyAccountIds||[]):raw;
+      if(copies.some(copy=>copy===id||!observedAccounts().some(a=>a.id===copy&&a.isVisible&&!/^EXPRESS[-_]|^XFA[-_]/i.test(a.name))))return res.status(400).json({error:'Copy accounts must be visible combines, separate from the funded account.'});
+      const allowed=[id,...[...copies].sort((a,b)=>a-b)],previous=config();
+      if(!state.policies.length||JSON.stringify(allowed)!==JSON.stringify(previous.allowedAccountIds)){
+        const recordedAt=new Date(now()).toISOString();
+        state.policies.push({...previous,id:'discipline-reset-'+crypto.randomUUID(),effectiveAt:recordedAt,resetStartedAt:previous.resetStartedAt||previous.effectiveAt||recordedAt,allowedAccountIds:allowed,primaryAccountId:id,copyAccountIds:allowed.slice(1),selectionSource:copies.length?'Owner-authorized funded account with copy-traded combines':'Owner-authorized funded account',revisionReason:text(req.body.reason,500)||'Authorized account selection revised'});save();
+      }res.json({policy:config()});
     });
     app.post('/audit/journal',(req,res)=>{
       const b=req.body,t=book.trades.find(t=>t.id===b.tradeId);if(!t||!t.complete)return res.status(400).json({error:'A completed recorded trade is required.'});
