@@ -4,6 +4,7 @@ const { buildORBStrategy } = require("./orb-strategy");
 const { buildMESFailureStrategy } = require("./mes-failure-strategy");
 const { readReport: readHistoryCoverage, runAudit: runHistoryAudit } = require("./history-coverage");
 const { read: readBackfill, runBackfill, exportData: exportBackfill } = require("./backtest-history");
+const { createAuditService } = require("./trade-audit-service");
 const signalR = require("@microsoft/signalr");
 const { DateTime } = require("luxon");
 
@@ -1928,7 +1929,7 @@ function calculateClosePressure({f1,bars5m,currentPrice,rthVwap,restingLiquidity
   };
 }
 
-function buildIndicatorPayload() {
+function buildIndicatorPayload({notify=true}={}) {
   if(!latestSnapshot||!contract) return {};
   const a=latestSnapshot.analytics||{}, tick=+contract.tickSize||0.25;
   const currentSession=currentTradingSessionDate();
@@ -2159,7 +2160,7 @@ function buildIndicatorPayload() {
     components:{setupQuality:Math.round(+bestSetup.quality)}
   }:(trapSignal.side!=="NEUTRAL"?{...trapSignal,key:"trap|"+(trapSignal.reasons?.[0]||"signal")}:null);
   const signal=stabilizeActionableSignal(candidateSignal);
-  maybeSendSignalAlert(signal,currentPrice);
+  if(notify) maybeSendSignalAlert(signal,currentPrice);
 
   return {
     schemaVersion:"1.9",
@@ -2410,6 +2411,7 @@ async function init() {
   await authenticate();
   await findContract();
   await buildSnapshot();
+  privateAudits.start();
 
   if(DIRECT_TOPSTEP_REALTIME){
     await connectStream();
@@ -2438,6 +2440,15 @@ process.on("SIGINT",()=>{ try{saveState(true);}finally{process.exit(0);} });
 
 const app=express();
 app.use(express.json({limit:"256kb"}));
+// Account executions and journal records are isolated from all public responses.
+const privateAudits=createAuditService({dir:`${DATA_DIR}/private-audits`,
+  post:(apiPath,payload)=>post(apiPath,payload,true,15000),
+  getMarket:()=>buildIndicatorPayload({notify:false}),getSnapshot:()=>latestSnapshot,
+  structureAt:(bs,at)=>calculateMarketStructure(bs,aggregateBars(bs,15),null,at).state,
+  mesUrl:MARKET_SYMBOL==='MNQ'?MES_SERVICE_URL:'',
+  accessToken:process.env.AUDIT_ACCESS_TOKEN||'',
+  enabled:MARKET_SYMBOL==='MNQ'&&String(process.env.AUDIT_ENABLED||'false')==='true'});
+privateAudits.attach(app);
 
 app.post("/realtime-relay",(req,res)=>{
   if(!REALTIME_RELAY_TOKEN) return res.status(503).json({ok:false,error:"relay token not configured"});
