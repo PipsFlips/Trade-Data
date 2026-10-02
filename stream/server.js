@@ -1,6 +1,7 @@
 const express = require("express");
 const { buildIBStrategy } = require("./ib-strategy");
 const { buildORBStrategy } = require("./orb-strategy");
+const { buildMESFailureStrategy } = require("./mes-failure-strategy");
 const { readReport: readHistoryCoverage, runAudit: runHistoryAudit } = require("./history-coverage");
 const { read: readBackfill, runBackfill, exportData: exportBackfill } = require("./backtest-history");
 const signalR = require("@microsoft/signalr");
@@ -2123,6 +2124,7 @@ function buildIndicatorPayload() {
     bars:bars5m.slice(-500),market:MARKET_SYMBOL,fresh:Boolean(relayFresh),currentPrice,
     structureAt:(closed,asOf)=>calculateMarketStructure(closed,aggregateBars(closed,15),null,asOf).state
   });
+  const failureStrategy=buildMESFailureStrategy({bars:bars5m.slice(-500),market:MARKET_SYMBOL,fresh:Boolean(relayFresh),currentPrice});
   const absorptionZones=relayFresh?calculateAbsorptionZones({f1,bars5m,currentPrice,levels}):[];
   const closePressure=calculateClosePressure({
     f1,bars5m,currentPrice,rthVwap,
@@ -2205,6 +2207,7 @@ function buildIndicatorPayload() {
     marketStructure,
     ibStrategy,
     orbStrategy,
+    failureStrategy,
     closePressure,
     volatility:{atr5m20:current5mAtr(liveBars5m,20),atr14Daily:latestSnapshot.analytics?.volatility?.ATR14Daily??null},
     diagnostics:{tradeEventsReceived,tradeEventsMatched,quoteEventsReceived,depthEventsReceived,lastRawTradeEvent,lastRawQuoteEvent,lastRawDepthEvent,reconnectCount,subscriptionResults,relayFresh:Boolean(relayFresh),relayReceivedAt:relayState?.receivedAt||null,lastTradeAt:relayState?.lastTradeAt||lastTradeAt||null,lastTradeReceivedAt:relayState?.lastTradeReceivedAt||null,lastQuoteReceivedAt:relayState?.lastQuoteReceivedAt||null,lastDepthReceivedAt:relayState?.lastDepthReceivedAt||null,alertScoreThreshold:ALERT_SCORE_THRESHOLD,smsConfigured:Boolean(ALERT_SMS_TO&&TWILIO_ACCOUNT_SID&&TWILIO_AUTH_TOKEN&&TWILIO_FROM_NUMBER)},

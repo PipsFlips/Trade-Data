@@ -60,7 +60,10 @@ test('open candle cannot confirm and structure callback cannot see future bars',
   assert.equal(s.state,'ARMED LONG');
 });
 test('MES cannot use MNQ sizing and ORB daily range resets in Eastern Time',()=>{
-  assert.equal(run(long(),25,{market:'MES'}).state,'MNQ ONLY');
+  assert.equal(run(long(),25,{market:'MES'}).state,'NO TRADE — STOP TOO WIDE');
+  const rows=[...opening(),long()[3],bar(20,30055,30056,30050,30054)];
+  const mes=run(rows,25,{market:'MES'});assert.equal(mes.state,'LONG ENTRY');assert.equal(mes.market,'MES');
+  assert.equal(mes.plan.stop,30049.5);assert.equal(mes.plan.contracts,2);assert.ok(mes.plan.risk+mes.plan.costReserve<=100);
   const tomorrow=buildORBStrategy({bars:long(),now:t(24*60+15),fresh:true});assert.equal(tomorrow.state,'UNAVAILABLE — ORB DATA INCOMPLETE');
 });
 test('deployment explicitly packages both strategy modules and payload keeps both fields',()=>{

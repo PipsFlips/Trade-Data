@@ -1,10 +1,11 @@
 // Opening-hour candidate. This is a plan calculator, not a broker/order connection.
 const {etParts}=require('./ib-strategy');
 function buildORBStrategy({bars=[],now=Date.now(),market='MNQ',fresh=false,currentPrice=null,structureAt}){
-  const today=etParts(now),base={date:today.date,market:'MNQ',strategy:'ORB',rangeLabel:'ORB',entryCutoffET:'10:15',exitTimeET:'10:30',state:'WAIT — ORB FORMING',reason:'Range forms 09:30–09:45 ET. No entries before 09:45 ET.',high:null,low:null,sizePct:null,eligible:false,plan:null,side:null,breakout:false,retest:false,confirmation:false,vwap:null,structure:'TRANSITION',cutoffMinutes:Math.max(0,615-today.minutes)};
+  const mes=market==='MES',pointValue=mes?5:2,stopBuffer=mes?.5:2,maxStop=mes?8:20,costReserve=mes?4:0;
+  const today=etParts(now),base={date:today.date,market,strategy:'ORB',rangeLabel:'ORB',entryCutoffET:'10:15',exitTimeET:'10:30',state:'WAIT — ORB FORMING',reason:'Range forms 09:30–09:45 ET. No entries before 09:45 ET.',high:null,low:null,sizePct:null,eligible:false,plan:null,side:null,breakout:false,retest:false,confirmation:false,vwap:null,structure:'TRANSITION',cutoffMinutes:Math.max(0,615-today.minutes)};
   const result=(state,reason,extra={})=>({...base,state,reason,...extra});
   const completed=(reason)=>result('DONE FOR DAY',reason);
-  if(market!=='MNQ')return result('MNQ ONLY','ORB Strategy is configured for MNQ. MES analytics remain available in the advanced menu.');
+  if(!['MNQ','MES'].includes(market))return result('UNAVAILABLE — MARKET','ORB supports MNQ and MES only.');
   const valid=bars.filter(b=>Number.isFinite(Date.parse(b.t))&&['o','h','l','c','v'].every(k=>Number.isFinite(b[k]))&&b.v>=0&&b.h>=Math.max(b.o,b.c)&&b.l<=Math.min(b.o,b.c)&&b.h>=b.l);
   const unique=[...new Map(valid.map(b=>[Date.parse(b.t),b])).values()].sort((a,b)=>Date.parse(a.t)-Date.parse(b.t));
   const day=unique.filter(b=>{const p=etParts(Date.parse(b.t));return p.date===today.date&&p.minutes>=570&&p.minutes<960;});
@@ -53,13 +54,13 @@ function buildORBStrategy({bars=[],now=Date.now(),market='MNQ',fresh=false,curre
     base.retest=true;
     if(!outside(b))return result('INVALIDATED','The first retest candle closed inside the opening range. No second retest or opposite-side retry.');
     if(!align(b))return result('INVALIDATED','First retest confirmation did not align with NY VWAP and trend structure.');
-    const entry=side==='LONG'?b.h+.25:b.l-.25,stop=side==='LONG'?b.l-2:b.h+2;
-    const distance=Math.abs(entry-stop),contracts=Math.min(5,Math.floor(100/(distance*2)));
+    const entry=side==='LONG'?b.h+.25:b.l-.25,stop=side==='LONG'?b.l-stopBuffer:b.h+stopBuffer;
+    const distance=Math.abs(entry-stop),contracts=Math.min(5,Math.floor(100/(distance*pointValue+costReserve)));
     base.confirmation=true;
-    if(distance>20||distance<=0||contracts<1)return result('NO TRADE — STOP TOO WIDE','Structural stop exceeds the 20-point maximum. Do not tighten it to force a trade.');
+    if(distance>maxStop||distance<=0||contracts<1)return result('NO TRADE — STOP TOO WIDE',`Structural stop exceeds the ${maxStop}-point maximum. Do not tighten it to force a trade.`);
     const target=side==='LONG'?Math.ceil((entry+distance*1.5)*4)/4:Math.floor((entry-distance*1.5)*4)/4;
     const expiresAt=Math.min(end+300000,t+((615-etParts(t).minutes)*60000));
-    plan={side,entry,stop,distance,target,contracts,risk:distance*2*contracts,reward:Math.abs(target-entry)*2*contracts,rr:Math.abs(target-entry)/distance,confirmedAt:new Date(end).toISOString(),expiresAt:new Date(expiresAt).toISOString(),exitTimeET:'10:30'};
+    plan={side,entry,stop,distance,target,contracts,risk:distance*pointValue*contracts,costReserve:costReserve*contracts,reward:Math.abs(target-entry)*pointValue*contracts,rr:Math.abs(target-entry)/distance,confirmedAt:new Date(end).toISOString(),expiresAt:new Date(expiresAt).toISOString(),exitTimeET:'10:30'};
   }
   if(triggered)return result(today.minutes>=630?'TIME EXIT — 10:30 ET':'ENTRY LEVEL REACHED',today.minutes>=630?'10:30 ET time exit reached. Close any remaining ORB position at your broker. No new setup today.':'Entry price was reached after confirmation. Check your broker; a price touch is not a verified fill. No new setup today.',{plan:triggered});
   if(today.minutes>=615)return completed('10:15 ET entry cutoff passed. Cancel unfilled entries. Close any open ORB position at 10:30 ET.');
