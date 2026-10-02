@@ -4,7 +4,7 @@
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover" />
 <meta name="theme-color" content="#0b0f14" />
-<title>PipsFlips MNQ Indicator</title>
+<title>Trader PiP MNQ Indicator</title>
 <style>
 :root{--bg:#0b0f14;--panel:#111821;--panel2:#151e29;--text:#eef3f8;--muted:#8f9baa;--line:#263140;--green:#31c48d;--red:#f06565;--blue:#57a4ff;--amber:#f2b84b}
 *{box-sizing:border-box}
@@ -115,7 +115,7 @@ canvas{display:block;width:100%;height:410px;border-radius:8px;background:#0d131
         <button class="marketbtn active" data-market="MNQ">MNQ</button>
         <button class="marketbtn" data-market="MES">MES</button>
       </div>
-      <div class="brand" id="brand">PipsFlips • MNQ Live</div>
+      <div class="brand" id="brand">Trader PiP • MNQ Live</div>
       <div class="price" id="price">—</div>
       <div class="sub"><span id="contract">MNQ</span> · <span id="stamp">waiting for data</span></div>
       <div class="flowFresh stale" id="flowFresh"><span class="fdot"></span><span id="flowFreshText">ORDER FLOW WAITING</span></div>
@@ -1270,7 +1270,7 @@ async function refresh(){
     if(requestedMarket!==activeMarket)return;
     document.getElementById("price").textContent=fmt(d.currentPrice);
     document.getElementById("contract").textContent=d.contract?.name||activeMarket;
-    document.getElementById("brand").textContent="PipsFlips • "+activeMarket+" Live";
+    document.getElementById("brand").textContent="Trader PiP • "+activeMarket+" Live";
     document.getElementById("stamp").textContent=new Date(d.generatedUtc).toLocaleTimeString([], {hour:"numeric",minute:"2-digit",second:"2-digit"});
     const freshEl=document.getElementById("flowFresh");
     const freshText=document.getElementById("flowFreshText");
@@ -1338,7 +1338,7 @@ document.querySelectorAll(".marketbtn").forEach(btn=>{
     document.getElementById("ibState").textContent="WAIT — COLLECTOR DATA";
     document.getElementById("ibPlan").hidden=true;
     document.getElementById("ibMarkTaken").disabled=true;
-    document.getElementById("brand").textContent="PipsFlips • "+activeMarket+" Live";
+    document.getElementById("brand").textContent="Trader PiP • "+activeMarket+" Live";
     document.getElementById("contract").textContent=activeMarket;
     document.getElementById("price").textContent="—";
     document.getElementById("signal").textContent="NEUTRAL";
