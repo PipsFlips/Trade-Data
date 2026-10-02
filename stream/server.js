@@ -2,6 +2,7 @@ const express = require("express");
 const { buildIBStrategy } = require("./ib-strategy");
 const { buildORBStrategy } = require("./orb-strategy");
 const { readReport: readHistoryCoverage, runAudit: runHistoryAudit } = require("./history-coverage");
+const { read: readBackfill, runBackfill, exportData: exportBackfill } = require("./backtest-history");
 const signalR = require("@microsoft/signalr");
 const { DateTime } = require("luxon");
 
@@ -2424,6 +2425,9 @@ async function init() {
     post:(path,payload)=>post(path,payload,true,15000),
     file:`${DATA_DIR}/history-coverage-${MARKET_SYMBOL}.json`
   }).catch(()=>console.warn("Historical coverage audit could not complete")),15000);
+  setTimeout(()=>runBackfill({market:MARKET_SYMBOL,live:LIVE,
+    post:(path,payload)=>post(path,payload,true,20000),dir:`${DATA_DIR}/backtest-archive-${MARKET_SYMBOL}`
+  }).catch(()=>console.warn("Historical backfill could not complete")),30000);
 }
 
 process.on("SIGTERM",()=>{ try{saveState(true);}finally{process.exit(0);} });
@@ -2494,6 +2498,11 @@ app.get("/snapshot.json",(req,res)=>res.json(latestSnapshot||{}));
 app.get("/history-coverage.json",(req,res)=>{
   res.set("Cache-Control","no-store");
   res.json(readHistoryCoverage(`${DATA_DIR}/history-coverage-${MARKET_SYMBOL}.json`)||{market:MARKET_SYMBOL,status:"pending"});
+});
+app.get("/backtest-history.json",(req,res)=>{
+  res.set("Cache-Control","no-store");
+  const dir=`${DATA_DIR}/backtest-archive-${MARKET_SYMBOL}`;
+  res.json(req.query.export==='bars'?exportBackfill(dir):(readBackfill(`${dir}/manifest.json`)||{market:MARKET_SYMBOL,status:"pending"}));
 });
 app.get("/mnq-snapshot.json",(req,res)=>res.json(latestSnapshot||{}));
 
