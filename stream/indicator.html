@@ -640,11 +640,22 @@ function drawEdgefulOverlay(ctx,item,bars,x,y,left,top,cw,ch,min,max){
   ctx.fillStyle='#211d32';ctx.fillRect(left+4,top+ch-20,tw+12,17);
   ctx.fillStyle='#d4c3ff';ctx.fillText(label,left+10,top+ch-11);ctx.restore();
 }
-function drawVWAPTrades(ctx,plans,bars,x,y,left,top,cw,ch){
+function strategyChartPlans(data,bars){
+  const s=selectedStrategyData(data);if(!s||!bars.length)return [];
+  const plans=selectedStrategy==='VWAP'?(s.trades||[]):s.plan?[{...s.plan,status:/^(LONG|SHORT) ENTRY$/.test(s.state)?'PENDING':'ENTRY LEVEL REACHED'}]:[];
+  return plans.filter(p=>['entry','stop','target'].every(k=>Number.isFinite(p[k]))&&['LONG','SHORT'].includes(p.side)&&Number.isFinite(Date.parse(p.confirmedAt))).map(p=>{
+    const pending=p.status==='PENDING'||p.status==='EXPIRED';
+    const clock=pending?(s.entryCutoffET||'11:30'):(p.exitTimeET||s.exitTimeET||'16:00');
+    const [hour,minute]=clock.split(':').map(Number),confirmed=Date.parse(p.confirmedAt);
+    const boundary=confirmed+(hour*60+minute-etSessionMinutes(confirmed))*60000;
+    return {...p,chartEndAt:p.endedAt||(pending?p.expiresAt:null)||new Date(boundary).toISOString()};
+  }).filter(p=>Date.parse(p.confirmedAt)<=Date.parse(bars.at(-1).t)+300000&&Date.parse(p.chartEndAt)>=Date.parse(bars[0].t));
+}
+function drawStrategyTrades(ctx,plans,bars,x,y,left,top,cw,ch){
   ctx.save();ctx.beginPath();ctx.rect(left,top,cw,ch);ctx.clip();
   for(const p of plans.slice(-20)){
-    const start=bars.findIndex(b=>Date.parse(b.t)>=Date.parse(p.confirmedAt));if(start<0)continue;
-    const endTime=Date.parse(p.endedAt||(p.status==='PENDING'||p.status==='EXPIRED'?p.expiresAt:bars.at(-1).t));
+    let start=bars.findIndex(b=>Date.parse(b.t)>=Date.parse(p.confirmedAt));if(start<0)start=bars.length-1;
+    const endTime=Date.parse(p.chartEndAt);
     let end=bars.findIndex(b=>Date.parse(b.t)>=endTime);if(end<0)end=bars.length-1;
     const x1=x(start)-cw/bars.length*.4,x2=Math.max(x1+cw/bars.length*.8,x(Math.max(start,end))+cw/bars.length*.4),width=x2-x1;
     for(const [price,color] of [[p.stop,'#f06565'],[p.target,'#31c48d']]){
@@ -652,7 +663,10 @@ function drawVWAPTrades(ctx,plans,bars,x,y,left,top,cw,ch){
       ctx.globalAlpha=.14;ctx.fillStyle=color;ctx.fillRect(x1,yy,width,hh);ctx.globalAlpha=.8;ctx.strokeStyle=color;ctx.setLineDash(p.status==='PENDING'||p.status==='EXPIRED'?[3,3]:[]);ctx.strokeRect(x1,yy,width,hh);
     }
     ctx.globalAlpha=1;ctx.setLineDash([]);ctx.strokeStyle='#d8e3ef';ctx.beginPath();ctx.moveTo(x1,y(p.entry));ctx.lineTo(x2,y(p.entry));ctx.stroke();
-    const label=(p.side==='LONG'?'BUY':'SELL')+' setup',ly=Math.max(top+14,Math.min(top+ch-4,y(p.entry)-7));ctx.font='bold 9px sans-serif';ctx.textAlign='left';ctx.fillStyle=p.side==='LONG'?'#31c48d':'#f06565';ctx.fillText(label,x1,ly);
+    const label=(p.side==='LONG'?'BUY':'SELL')+' setup · '+fmt(p.entry),ly=Math.max(top+14,Math.min(top+ch-4,y(p.entry)-7));ctx.font='bold 9px sans-serif';ctx.textAlign='left';ctx.fillStyle=p.side==='LONG'?'#31c48d':'#f06565';
+    const labelX=Math.max(left+3,Math.min(left+cw-125,x1+3));ctx.fillText(label,labelX,ly);
+    ctx.fillStyle='#f06565';ctx.fillText('SL '+fmt(p.stop),labelX,Math.max(top+10,Math.min(top+ch-3,y(p.stop)-3)));
+    ctx.fillStyle='#31c48d';ctx.fillText('TP '+fmt(p.target),labelX,Math.max(top+10,Math.min(top+ch-3,y(p.target)-3)));
   }
   ctx.restore();
 }
@@ -679,8 +693,8 @@ function drawChart(data){
   let min=Math.min(...bars.map(b=>+b.l));
   let max=Math.max(...bars.map(b=>+b.h));
   const sessionIds=new Set(["onh","onl","asiaH","asiaL","londonH","londonL"]);
-  const vwapPlans=selectedStrategy==='VWAP'&&barKind==='5m'?(data.vwapStrategy?.trades||[]).filter(p=>bars.some(b=>Date.parse(b.t)>=Date.parse(p.confirmedAt)&&Date.parse(b.t)<=Date.parse(p.endedAt||p.expiresAt))):[];
-  if(vwapPlans.length){min=Math.min(min,...vwapPlans.flatMap(p=>[p.stop,p.target]));max=Math.max(max,...vwapPlans.flatMap(p=>[p.stop,p.target]));}
+  const strategyPlans=barKind==='5m'?strategyChartPlans(data,bars):[];
+  if(strategyPlans.length){min=Math.min(min,...strategyPlans.flatMap(p=>[p.stop,p.target]));max=Math.max(max,...strategyPlans.flatMap(p=>[p.stop,p.target]));}
   const sessionPrices=(data.levels||[])
     .filter(l=>chartLayers.sessions!==false&&sessionIds.has(l.id)&&Number.isFinite(+l.price))
     .map(l=>+l.price);
@@ -860,7 +874,7 @@ function drawChart(data){
   });
 
   // Levels: dotted line across the chart, labels anchored around 38% of the screen.
-  if(selectedStrategy==='VWAP'&&barKind==='5m')drawVWAPTrades(ctx,vwapPlans,bars,x,y,left,top,cw,ch);
+  if(barKind==='5m')drawStrategyTrades(ctx,strategyPlans,bars,x,y,left,top,cw,ch);
   const labelX=left+cw*.38;
   ctx.font="bold 9px -apple-system,BlinkMacSystemFont,Segoe UI,Arial";
   for(const l of visibleLevels){
