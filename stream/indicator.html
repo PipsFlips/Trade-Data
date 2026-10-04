@@ -450,13 +450,13 @@ try{
   const savedStrategy=localStorage.getItem("pipsflipsStrategy");
   if(savedStrategy==="IB"||savedStrategy==="ORB")selectedStrategy=savedStrategy;
 }catch{}
-function strategyChoices(){return activeMarket==='MES'?['ORB','FAILURE']:['IB','ORB'];}
-function selectedStrategyData(data){return selectedStrategy==='FAILURE'?data?.failureStrategy:selectedStrategy==='ORB'?data?.orbStrategy:data?.ibStrategy;}
+function strategyChoices(){return activeMarket==='MES'?['ORB','FAILURE','VWAP']:['IB','ORB','VWAP'];}
+function selectedStrategyData(data){return selectedStrategy==='VWAP'?data?.vwapStrategy:selectedStrategy==='FAILURE'?data?.failureStrategy:selectedStrategy==='ORB'?data?.orbStrategy:data?.ibStrategy;}
 function syncStrategySelection(){
   const choices=strategyChoices();
   if(!choices.includes(selectedStrategy))selectedStrategy=choices[0];
   const select=document.getElementById('strategySelect');
-  select.innerHTML=choices.map(value=>'<option value="'+value+'">'+(value==='FAILURE'?'Opening Range Failure':value+' Strategy')+'</option>').join('');
+  select.innerHTML=choices.map(value=>'<option value="'+value+'">'+(value==='VWAP'?'NY VWAP Pullback':value==='FAILURE'?'Opening Range Failure':value+' Strategy')+'</option>').join('');
   select.value=selectedStrategy;
 }
 try{const saved=localStorage.getItem('pipsflipsStrategy:'+activeMarket);if(strategyChoices().includes(saved))selectedStrategy=saved;}catch{}
@@ -640,6 +640,22 @@ function drawEdgefulOverlay(ctx,item,bars,x,y,left,top,cw,ch,min,max){
   ctx.fillStyle='#211d32';ctx.fillRect(left+4,top+ch-20,tw+12,17);
   ctx.fillStyle='#d4c3ff';ctx.fillText(label,left+10,top+ch-11);ctx.restore();
 }
+function drawVWAPTrades(ctx,plans,bars,x,y,left,top,cw,ch){
+  ctx.save();ctx.beginPath();ctx.rect(left,top,cw,ch);ctx.clip();
+  for(const p of plans.slice(-20)){
+    const start=bars.findIndex(b=>Date.parse(b.t)>=Date.parse(p.confirmedAt));if(start<0)continue;
+    const endTime=Date.parse(p.endedAt||(p.status==='PENDING'||p.status==='EXPIRED'?p.expiresAt:bars.at(-1).t));
+    let end=bars.findIndex(b=>Date.parse(b.t)>=endTime);if(end<0)end=bars.length-1;
+    const x1=x(start)-cw/bars.length*.4,x2=Math.max(x1+cw/bars.length*.8,x(Math.max(start,end))+cw/bars.length*.4),width=x2-x1;
+    for(const [price,color] of [[p.stop,'#f06565'],[p.target,'#31c48d']]){
+      const yy=Math.min(y(p.entry),y(price)),hh=Math.abs(y(p.entry)-y(price));
+      ctx.globalAlpha=.14;ctx.fillStyle=color;ctx.fillRect(x1,yy,width,hh);ctx.globalAlpha=.8;ctx.strokeStyle=color;ctx.setLineDash(p.status==='PENDING'||p.status==='EXPIRED'?[3,3]:[]);ctx.strokeRect(x1,yy,width,hh);
+    }
+    ctx.globalAlpha=1;ctx.setLineDash([]);ctx.strokeStyle='#d8e3ef';ctx.beginPath();ctx.moveTo(x1,y(p.entry));ctx.lineTo(x2,y(p.entry));ctx.stroke();
+    const label=(p.side==='LONG'?'BUY':'SELL')+' setup',ly=Math.max(top+14,Math.min(top+ch-4,y(p.entry)-7));ctx.font='bold 9px sans-serif';ctx.textAlign='left';ctx.fillStyle=p.side==='LONG'?'#31c48d':'#f06565';ctx.fillText(label,x1,ly);
+  }
+  ctx.restore();
+}
 function drawChart(data){
   lastData=data;
   const edgeItem=renderEdgefulChart(data);
@@ -663,6 +679,8 @@ function drawChart(data){
   let min=Math.min(...bars.map(b=>+b.l));
   let max=Math.max(...bars.map(b=>+b.h));
   const sessionIds=new Set(["onh","onl","asiaH","asiaL","londonH","londonL"]);
+  const vwapPlans=selectedStrategy==='VWAP'&&barKind==='5m'?(data.vwapStrategy?.trades||[]).filter(p=>bars.some(b=>Date.parse(b.t)>=Date.parse(p.confirmedAt)&&Date.parse(b.t)<=Date.parse(p.endedAt||p.expiresAt))):[];
+  if(vwapPlans.length){min=Math.min(min,...vwapPlans.flatMap(p=>[p.stop,p.target]));max=Math.max(max,...vwapPlans.flatMap(p=>[p.stop,p.target]));}
   const sessionPrices=(data.levels||[])
     .filter(l=>chartLayers.sessions!==false&&sessionIds.has(l.id)&&Number.isFinite(+l.price))
     .map(l=>+l.price);
@@ -842,6 +860,7 @@ function drawChart(data){
   });
 
   // Levels: dotted line across the chart, labels anchored around 38% of the screen.
+  if(selectedStrategy==='VWAP'&&barKind==='5m')drawVWAPTrades(ctx,vwapPlans,bars,x,y,left,top,cw,ch);
   const labelX=left+cw*.38;
   ctx.font="bold 9px -apple-system,BlinkMacSystemFont,Segoe UI,Arial";
   for(const l of visibleLevels){
@@ -990,8 +1009,8 @@ function drawChart(data){
       ctx.restore();
     }
   }
-  if(barKind==="5m" && chartLayers.vwap!==false){
-    drawVwap(sessionSeries,"#ffffff","Session VWAP");
+  if(barKind==="5m" && (chartLayers.vwap!==false||selectedStrategy==='VWAP')){
+    if(chartLayers.vwap!==false)drawVwap(sessionSeries,"#ffffff","Session VWAP");
     drawVwap(nySeries,"#f2c94c","NY VWAP");
   }
 
@@ -1165,9 +1184,28 @@ const mesStrategyRules={
   FAILURE:'Research candidate. ORB forms 09:30–09:45 ET. After the first outside close, require a later close strictly inside, then a still-later retest of the failed boundary. Upside failure: short with retest close inside and below NY VWAP. Downside failure: long with close inside and above NY VWAP. No structure filter. Entry one tick beyond retest extreme; stop 0.50 points beyond the opposite extreme, maximum 8 points. Size uses the $100 budget including a $4/contract reserve. Target the nearest profitable NY VWAP or opposite ORB boundary, requiring at least 1.5R. Entry expires after the next candle; cutoff and time exit 10:30 ET. No retry.'
 };
 function ibFact(label,value){return '<div class="ibFact"><small>'+label+'</small><b>'+value+'</b></div>';}
+function renderVWAPStrategy(data){
+  const s=data?.vwapStrategy,p=s?.plan;
+  document.getElementById('strategyTitle').textContent='NY VWAP Pullback';document.getElementById('selectedStrategyLabel').textContent='NY VWAP Pullback';
+  document.getElementById('ibStrategyPanel').setAttribute('aria-label','NY VWAP Pullback');
+  document.getElementById('ibClock').textContent='09:45–11:30 ET · exit noon';
+  document.getElementById('strategyRules').textContent='NY VWAP resets at 09:30 ET. Opening range: 09:30–09:45. Setup candles must start at or after 09:45, so earliest confirmation is 09:50. Fresh session high above rising NY VWAP arms a long; fresh session low below falling NY VWAP arms a short. A later candle must span VWAP and close above it with a bullish body for longs, or below it with a bearish body for shorts; VWAP slope must still agree. First touch only. Entry one tick beyond confirmation high/low; stop '+(activeMarket==='MES'?'0.50':'2')+' points beyond its opposite extreme. Target 1.5R rounded outward to a valid tick; prior session extreme frozen before the pullback must provide that much room. Size floor(150 / (stop distance × contract point value)), capped at five. Entry valid for the next 5-minute candle only; no entries after 11:30, flatten by 12:00 ET. One observed position at a time; require a fresh extreme after completion or expiry. Chart boxes are research signals, not broker fills; same-bar stop/target conflicts assume stop first.';
+  document.getElementById('strategyNote').textContent=activeMarket+' research candidate · NY VWAP only · up to $150 price risk · up to 5 contracts · at least 1.5R · commissions/slippage extra. Indicator sizing does not replace your locked broker bracket or daily loss limit.';
+  const state=document.getElementById('ibState');state.textContent=s?.state||'UNAVAILABLE — STRATEGY DATA';state.className='ibState '+(s?.state==='LONG ENTRY'?'buy':s?.state==='SHORT ENTRY'?'sell':'neutral');
+  document.getElementById('ibReason').textContent=s?.reason||'Waiting for NY VWAP strategy collector data.';
+  document.getElementById('ibFacts').innerHTML=s?[
+    ibFact('NY VWAP · bar estimate',s.vwap===null?'—':fmt(s.vwap)),ibFact('Anchor / setups','09:30 / 09:45 ET'),ibFact('Armed direction',s.side||'—'),ibFact('Signals today',String(s.trades.length)),ibFact('Opening range high',s.high===null?'—':fmt(s.high)),ibFact('Opening range low',s.low===null?'—':fmt(s.low))
+  ].join(''):'';
+  const plan=document.getElementById('ibPlan');plan.hidden=!p;plan.innerHTML=p?[
+    ibFact('Stop-entry · '+p.side,fmt(p.entry)),ibFact('Stop',fmt(p.stop)),ibFact('Target',fmt(p.target)),ibFact('Size',p.contracts+' '+activeMarket),ibFact('Price risk / reward','$'+fmt(p.risk)+' / $'+fmt(p.reward)),ibFact('Reward / risk',p.rr.toFixed(2)+'R'),ibFact('Prior extreme',fmt(p.priorExtreme)),ibFact('Entry expires · ET',new Date(p.expiresAt).toLocaleTimeString('en-US',{timeZone:'America/New_York',hour:'2-digit',minute:'2-digit'}))
+  ].join(''):'';
+  document.getElementById('ibDaily').textContent='Research signals · price touches are not verified fills';document.getElementById('ibMarkTaken').hidden=true;ibCurrent=null;
+}
 function renderIBStrategy(data){
   strategyData=data||null;
   syncStrategySelection();
+  if(selectedStrategy==='VWAP'){renderVWAPStrategy(data);return;}
+  document.getElementById('ibMarkTaken').hidden=false;
   const mes=activeMarket==='MES',failure=selectedStrategy==='FAILURE';
   const name=failure?'Opening Range Failure':selectedStrategy+' Strategy',range=selectedStrategy==='IB'?'IB':'ORB',cutoff=failure?'10:30':selectedStrategy==='ORB'?'10:15':'11:30';
   const s=selectedStrategyData(data);
